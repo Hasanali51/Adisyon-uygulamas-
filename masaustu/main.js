@@ -97,7 +97,7 @@ function trayOlustur() {
   const iconYolu = path.join(__dirname, "build", "icon.png");
   const trayIcon = nativeImage.createFromPath(iconYolu).resize({ width: 16, height: 16 });
   tray = new Tray(trayIcon);
-  tray.setToolTip("Adisyo çalışıyor (arka planda)");
+  tray.setToolTip(`Adisyo çalışıyor (arka planda) — v${app.getVersion()}`);
 
   const menu = Menu.buildFromTemplate([
     { label: "Adisyo'yu Aç", click: () => pencereyiAc() },
