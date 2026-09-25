@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no" />
+  <title>Adisyo</title>
+  <style>
+    :root {
+      --ink: #2B241C;
+      --paper: #F3EEE3;
+      --card: #FFFEFB;
+      --line: #DED5C2;
+      --wine: #7A2E3D;
+      --rust: #B15A3C;
+      --rust-bg: #F5E6DE;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0; height: 100%;
+      background: var(--paper); color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    .sarmalayici {
+      min-height: 100%;
+      display: flex; flex-direction: column; justify-content: center; align-items: center;
+      padding: 24px;
+    }
+    .kart {
+      background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+      padding: 28px 24px; width: 100%; max-width: 380px;
+      box-shadow: 0 4px 24px rgba(43,36,28,0.08);
+    }
+    .logo {
+      width: 64px; height: 64px; border-radius: 16px; background: var(--wine);
+      display: flex; align-items: center; justify-content: center; margin: 0 auto 16px;
+    }
+    .logo svg { width: 32px; height: 32px; }
+    h1 { font-size: 20px; text-align: center; margin: 0 0 6px; font-weight: 700; }
+    p.aciklama { font-size: 13px; text-align: center; opacity: 0.65; margin: 0 0 20px; line-height: 1.5; }
+    label { font-size: 12px; opacity: 0.6; display: block; margin-bottom: 6px; }
+    input {
+      width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line);
+      font-size: 15px; outline: none; margin-bottom: 14px; background: white; color: var(--ink);
+    }
+    input:focus { border-color: var(--wine); }
+    button {
+      width: 100%; padding: 13px; border-radius: 10px; border: none;
+      background: var(--wine); color: white; font-size: 15px; font-weight: 600;
+      cursor: pointer;
+    }
+    button:active { opacity: 0.85; }
+    .ipucu {
+      background: var(--rust-bg); color: var(--rust); font-size: 12px; line-height: 1.5;
+      border-radius: 10px; padding: 12px 14px; margin-top: 16px;
+    }
+    .hata { color: var(--rust); font-size: 12px; margin: -8px 0 12px; display: none; }
+  </style>
+</head>
+<body>
+  <div class="sarmalayici">
+    <div class="kart">
+      <div class="logo">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="5" y="3" width="14" height="18" rx="2" fill="#F3EEE3"/>
+          <line x1="8" y1="8" x2="16" y2="8" stroke="#7A2E3D" stroke-width="1.4"/>
+          <line x1="8" y1="11" x2="16" y2="11" stroke="#7A2E3D" stroke-width="1.4"/>
+          <line x1="8" y1="14" x2="12.5" y2="14" stroke="#7A2E3D" stroke-width="1.4"/>
+          <line x1="8" y1="17" x2="16" y2="17" stroke="#D9A441" stroke-width="2"/>
+        </svg>
+      </div>
+      <h1>Adisyo'ya Bağlan</h1>
+      <p class="aciklama">
+        Kafenin bilgisayarında Adisyo açıkken çıkan "Diğer cihazlardan" adresini
+        gir. Bunu sadece bir kere yapman yeterli.
+      </p>
+      <label for="adres">Sunucu adresi</label>
+      <input id="adres" type="text" inputmode="url" placeholder="192.168.1.23:4000" autocapitalize="off" autocorrect="off" />
+      <div class="hata" id="hata">Geçerli bir adres gir (örn. 192.168.1.23:4000)</div>
+      <button onclick="baglan()">Bağlan</button>
+      <div class="ipucu">
+        İpucu: Adres genelde <b>192.168</b> ile başlar. Kafedeki bilgisayarda
+        Adisyo programının siyah penceresinde ya da Ayarlar ekranında yazar.
+      </div>
+    </div>
+  </div>
+
+  <script>
+    var KAYIT_ANAHTARI = "adisyo_sunucu_adresi";
+
+    function normallestir(girdi) {
+      var deger = (girdi || "").trim();
+      if (!deger) return null;
+      if (deger.indexOf("http://") !== 0 && deger.indexOf("https://") !== 0) {
+        deger = "http://" + deger;
+      }
+      if (!/:\d+$/.test(deger.replace(/\/$/, ""))) {
+        deger = deger.replace(/\/$/, "") + ":4000";
+      }
+      return deger.replace(/\/$/, "");
+    }
+
+    function baglan() {
+      var girdi = document.getElementById("adres").value;
+      var adres = normallestir(girdi);
+      if (!adres) {
+        document.getElementById("hata").style.display = "block";
+        return;
+      }
+      localStorage.setItem(KAYIT_ANAHTARI, adres);
+      window.location.href = adres;
+    }
+
+    // Daha önce bir adres girilmişse otomatik doldur / otomatik bağlan
+    (function () {
+      var kayitli = localStorage.getItem(KAYIT_ANAHTARI);
+      if (kayitli) {
+        document.getElementById("adres").value = kayitli.replace(/^https?:\/\//, "");
+      }
+    })();
+
+    document.getElementById("adres").addEventListener("keydown", function (e) {
+      if (e.key === "Enter") baglan();
+    });
+  </script>
+</body>
+</html>

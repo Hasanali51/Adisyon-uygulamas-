@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Adisyo</string>
+    <string name="title_activity_main">Adisyo</string>
+    <string name="package_name">com.adisyo.app</string>
+    <string name="custom_url_scheme">com.adisyo.app</string>
+</resources>

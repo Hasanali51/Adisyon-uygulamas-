@@ -1,0 +1,59 @@
+{
+  "name": "adisyo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Adisyo - Kafe/Restoran Otomasyonu",
+  "main": "main.js",
+  "scripts": {
+    "derle-win": "electron-builder --win nsis --x64",
+    "derle-mac": "electron-builder --mac dmg"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "ws": "^8.17.0",
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "electron": "^30.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.adisyo.masaotomasyonu",
+    "productName": "Adisyo",
+    "asar": false,
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Hasanali51",
+        "repo": "Adisyon-uygulamas-"
+      }
+    ],
+    "files": [
+      "main.js",
+      "preload.js",
+      "backend-embedded/**/*",
+      "node_modules/**/*",
+      "build/**/*",
+      "!node_modules/electron/**/*",
+      "!node_modules/electron-builder/**/*"
+    ],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Adisyo"
+    },
+    "mac": {
+      "target": ["dmg"],
+      "icon": "build/icon.png",
+      "identity": null
+    }
+  }
+}
