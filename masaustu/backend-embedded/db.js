@@ -70,6 +70,7 @@ const varsayilanDurum = () => ({
     kdvGoster: false,
     siparisNoGoster: false,
     seciliYazici: "",
+    mutfakYazicisi: "",
   },
   paketSiparisler: [],
   paketAyarlari: { kutuSayisi: 6 },

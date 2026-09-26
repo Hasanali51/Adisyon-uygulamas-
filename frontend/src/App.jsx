@@ -441,6 +441,44 @@ function bayttanBase64(bayt) {
 const ESC = 0x1b;
 const GS = 0x1d;
 
+// Mutfak fişi (KOT - Kitchen Order Ticket): fiyatsız, sade — sadece mutfağın
+// ne hazırlayacağını bilmesi için. Kasadaki fiş ayarlarından (yazı boyutu
+// vb.) bağımsız, sabit ve büyük punto kullanır ki mutfakta uzaktan okunsun.
+function kotEscposOlustur(masaAdi, kalemler, isletme) {
+  const genislik = isletme.kagitGenisligi === "58mm" ? 32 : 42;
+  const b = [];
+  const ekle = (...bayt) => b.push(...bayt);
+  const satir = (s = "") => ekle(...metniBayta(s), 0x0a);
+  const cizgi = () => satir("-".repeat(genislik));
+
+  ekle(ESC, 0x40);
+  ekle(ESC, 0x61, 0x01); // ortala
+  ekle(GS, 0x21, 0x11); // çift yükseklik + çift genişlik
+  satir("MUTFAK");
+  ekle(GS, 0x21, 0x01); // çift yükseklik
+  satir(masaAdi);
+  ekle(GS, 0x21, 0x00);
+  satir(new Date().toLocaleString("tr-TR"));
+  ekle(ESC, 0x61, 0x00); // sola yasla
+  cizgi();
+
+  ekle(GS, 0x21, 0x11); // ürünler büyük punto — mutfakta uzaktan okunsun
+  for (const k of kalemler) {
+    satir(`${k.adet}x ${k.ad}`);
+    if (k.not) {
+      ekle(GS, 0x21, 0x01);
+      satir(`  * ${k.not}`);
+      ekle(GS, 0x21, 0x11);
+    }
+  }
+  ekle(GS, 0x21, 0x00);
+  cizgi();
+
+  ekle(0x0a, 0x0a, 0x0a);
+  ekle(GS, 0x56, 0x00); // kes
+  return b;
+}
+
 function masaToplam(masa) {
   return masa.urunler.reduce((t, u) => t + u.fiyat * u.adet, 0);
 }
@@ -550,6 +588,7 @@ export default function AdisyoUygulamasi() {
   const [yazdirilacakFis, setYazdirilacakFis] = useState(null);
 
   const [menuAcik, setMenuAcik] = useState(false); // sol taraftaki 3 çizgi (☰) menü
+  const [masaIslemMenuAcik, setMasaIslemMenuAcik] = useState(false); // sipariş çekmecesindeki "Taşı/Birleştir" menüsü
   const [onizlemeSecimi, setOnizlemeSecimi] = useState(null); // Ayarlar > Fiş Önizleme'de seçilen geçmiş sipariş
   const [yaziciListesi, setYaziciListesi] = useState([]); // Electron'dan gelen sistem yazıcıları
 
@@ -864,7 +903,50 @@ export default function AdisyoUygulamasi() {
     setDrawerSekme("ekle");
     setOdemeEkrani(false);
     setOdenenFis(null);
+    setMasaIslemMenuAcik(false);
   };
+
+  // Masayı boş bir masaya taşı: mevcut siparişin tamamı hedef masaya geçer,
+  // kaynak masa boşalır. Genelde "müşteri yer değiştirdi" durumunda kullanılır.
+  const masayiTasi = (hedefMasaId) => {
+    if (!seciliMasa) return;
+    const hedef = durum.masalar.find((m) => m.id === hedefMasaId);
+    if (!hedef || hedef.durum !== "bos") return;
+    const yeniMasalar = durum.masalar.map((m) => {
+      if (m.id === seciliMasa.id) return { ...m, urunler: [], durum: "bos", acilisZamani: null };
+      if (m.id === hedefMasaId)
+        return { ...m, urunler: seciliMasa.urunler, durum: "dolu", acilisZamani: seciliMasa.acilisZamani || Date.now() };
+      return m;
+    });
+    kaydet({ ...durum, masalar: yeniMasalar });
+    setMasaIslemMenuAcik(false);
+    setSeciliMasaId(hedefMasaId);
+  };
+
+  // Masaları birleştir: seçili masadaki tüm kalemler, dolu olan başka bir
+  // masanın siparişine eklenir (aynı üründen varsa adetleri toplanır),
+  // seçili masa boşalır. Genelde "iki masa birleşti" durumunda kullanılır.
+  const masalariBirlestir = (digerMasaId) => {
+    if (!seciliMasa) return;
+    const diger = durum.masalar.find((m) => m.id === digerMasaId);
+    if (!diger || diger.id === seciliMasa.id) return;
+    const birlesmisUrunler = [...diger.urunler];
+    seciliMasa.urunler.forEach((u) => {
+      const idx = birlesmisUrunler.findIndex((x) => x.id === u.id && x.not === u.not);
+      if (idx >= 0) birlesmisUrunler[idx] = { ...birlesmisUrunler[idx], adet: birlesmisUrunler[idx].adet + u.adet };
+      else birlesmisUrunler.push({ ...u });
+    });
+    const yeniMasalar = durum.masalar.map((m) => {
+      if (m.id === seciliMasa.id) return { ...m, urunler: [], durum: "bos", acilisZamani: null };
+      if (m.id === digerMasaId)
+        return { ...m, urunler: birlesmisUrunler, durum: "dolu", acilisZamani: diger.acilisZamani || Date.now() };
+      return m;
+    });
+    kaydet({ ...durum, masalar: yeniMasalar });
+    setMasaIslemMenuAcik(false);
+    setSeciliMasaId(digerMasaId);
+  };
+
   const sepeteEkle = (urun) => setSepet((s) => ({ ...s, [urun.id]: (s[urun.id] || 0) + 1 }));
   const sepettenCikar = (urunId) =>
     setSepet((s) => {
@@ -887,6 +969,21 @@ export default function AdisyoUygulamasi() {
   // Sipariş gönderme: yeni eklenenleri masanın mevcut açık siparişine ekler (üzerine yazmaz)
   const siparisiGonder = () => {
     if (!seciliMasa || sepetListesi.length === 0) return;
+
+    // Stok kontrolü: stokAdedi tanımlı (null/undefined değil) ürünlerde
+    // istenen miktar kalan stoktan fazlaysa siparişi durdur, hangi üründe
+    // yetersiz olduğunu söyle. Stok takibi olmayan ürünlerde (stokAdedi
+    // boş/null) hiçbir kısıtlama yok.
+    for (const yeni of sepetListesi) {
+      const menuUrunu = tumUrunler.find((mu) => mu.id === yeni.id);
+      if (menuUrunu && menuUrunu.stokAdedi != null && menuUrunu.stokAdedi < yeni.adet) {
+        window.alert(
+          `"${menuUrunu.ad}" için yeterli stok yok (kalan: ${menuUrunu.stokAdedi}, istenen: ${yeni.adet}).`
+        );
+        return;
+      }
+    }
+
     const guncelUrunler = [...seciliMasa.urunler];
     sepetListesi.forEach((yeni) => {
       const idx = guncelUrunler.findIndex((u) => u.id === yeni.id);
@@ -903,9 +1000,27 @@ export default function AdisyoUygulamasi() {
         ? { ...m, durum: "dolu", urunler: guncelUrunler, acilisZamani: m.acilisZamani || Date.now() }
         : m
     );
-    kaydet({ ...durum, masalar: yeniMasalar });
+    // Stoktan düş (sadece stokAdedi tanımlı ürünlerde)
+    const yeniMenu = menu.map((k) => ({
+      ...k,
+      urunler: k.urunler.map((mu) => {
+        const gonderilen = sepetListesi.find((s) => s.id === mu.id);
+        if (gonderilen && mu.stokAdedi != null) {
+          return { ...mu, stokAdedi: Math.max(0, mu.stokAdedi - gonderilen.adet) };
+        }
+        return mu;
+      }),
+    }));
+    kaydet({ ...durum, masalar: yeniMasalar, menu: yeniMenu });
     setSepet({});
     setSepetNotlar({});
+
+    // Mutfak yazıcısı seçiliyse, sadece YENİ eklenen kalemleri (fiyatsız,
+    // sade) mutfağa bas — kasadaki fiş ayarlarından bağımsız, ayrı bir yazıcı.
+    if (window.adisyo && fisAyarlari.mutfakYazicisi) {
+      const kotBayt = kotEscposOlustur(seciliMasa.ad, sepetListesi, isletme);
+      window.adisyo.hamYazdir(fisAyarlari.mutfakYazicisi, bayttanBase64(kotBayt)).catch(() => {});
+    }
   };
 
   // ---- Kısmi / bölünmüş ödeme: masanın açık siparişinden istenen kalemler seçilip ödenir ----
@@ -1104,6 +1219,7 @@ export default function AdisyoUygulamasi() {
     kdvGoster: false,
     siparisNoGoster: false,
     seciliYazici: "",
+    mutfakYazicisi: "",
   };
   const fisAyarlari = { ...VARSAYILAN_FIS_AYARLARI, ...(durum.fisAyarlari || {}) };
   const fisAyarlariGuncelle = (alanlar) => {
@@ -2023,6 +2139,19 @@ export default function AdisyoUygulamasi() {
                           className="w-20 text-sm outline-none bg-transparent text-right"
                         />
                         <span className="text-xs opacity-50">₺</span>
+                        <input
+                          type="number"
+                          min={0}
+                          placeholder="Stok yok"
+                          title="Stok takibi (boş = sınırsız/takip yok)"
+                          value={u.stokAdedi ?? ""}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            urunGuncelle(k.id, u.id, { stokAdedi: v === "" ? null : Math.max(0, parseInt(v, 10) || 0) });
+                          }}
+                          className="w-20 text-xs outline-none bg-transparent text-right border-l pl-2"
+                          style={{ borderColor: LINE }}
+                        />
                         <button onClick={() => urunSil(k.id, u.id)} className="opacity-40 hover:opacity-90">
                           <X size={14} />
                         </button>
@@ -2142,6 +2271,27 @@ export default function AdisyoUygulamasi() {
                     <div className="text-[11px] opacity-50 mt-1">
                       Bir yazıcı seçersen, fişler pencere açılmadan doğrudan o yazıcıya basılır ve sonunda
                       otomatik kağıt kesme komutu gönderilir (yazıcının bıçağı varsa).
+                    </div>
+                  </div>
+                )}
+
+                {window.adisyo && (
+                  <div>
+                    <div className="text-xs opacity-60 mb-1">Mutfak Yazıcısı (KOT)</div>
+                    <select
+                      value={fisAyarlari.mutfakYazicisi}
+                      onChange={(e) => fisAyarlariGuncelle({ mutfakYazicisi: e.target.value })}
+                      style={{ borderColor: LINE }}
+                      className="border rounded px-3 py-2 text-sm w-full outline-none bg-transparent"
+                    >
+                      <option value="">Mutfak fişi basma</option>
+                      {yaziciListesi.map((ad) => (
+                        <option key={ad} value={ad}>{ad}</option>
+                      ))}
+                    </select>
+                    <div className="text-[11px] opacity-50 mt-1">
+                      Seçersen, "Sipariş Ekle"den masaya yeni ürün gönderdiğinde (fiyatsız, sade) otomatik
+                      olarak mutfağa da bir fiş basılır. Kasadaki yazıcıdan farklı, ayrı bir yazıcı olmalı.
                     </div>
                   </div>
                 )}
@@ -2882,6 +3032,52 @@ export default function AdisyoUygulamasi() {
                   <div className="text-[11px] opacity-55">{gecenSure(seciliMasa.acilisZamani, simdi)} önce açıldı</div>
                 )}
               </div>
+              {seciliMasa.urunler.length > 0 && !odenenFis && (
+                <div className="relative">
+                  <button
+                    onClick={() => setMasaIslemMenuAcik((a) => !a)}
+                    className="opacity-60 hover:opacity-100 px-2 py-1 text-xs border rounded"
+                    style={{ borderColor: LINE }}
+                  >
+                    Taşı / Birleştir
+                  </button>
+                  {masaIslemMenuAcik && (
+                    <div
+                      style={{ background: CARD, borderColor: LINE }}
+                      className="absolute right-0 mt-1 w-56 border rounded-lg shadow-lg z-50 max-h-64 overflow-y-auto"
+                    >
+                      <div className="text-[11px] opacity-50 px-3 pt-2 pb-1">Boş masaya taşı</div>
+                      {durum.masalar.filter((m) => m.durum === "bos" && m.id !== seciliMasa.id).map((m) => (
+                        <button
+                          key={m.id}
+                          onClick={() => masayiTasi(m.id)}
+                          className="block w-full text-left text-sm px-3 py-1.5 hover:bg-black/5"
+                        >
+                          {m.ad}
+                        </button>
+                      ))}
+                      {durum.masalar.filter((m) => m.durum === "bos" && m.id !== seciliMasa.id).length === 0 && (
+                        <div className="text-xs opacity-40 px-3 pb-1">Boş masa yok</div>
+                      )}
+                      <div className="text-[11px] opacity-50 px-3 pt-2 pb-1 border-t" style={{ borderColor: LINE }}>
+                        Dolu masayla birleştir
+                      </div>
+                      {durum.masalar.filter((m) => m.durum === "dolu" && m.id !== seciliMasa.id).map((m) => (
+                        <button
+                          key={m.id}
+                          onClick={() => masalariBirlestir(m.id)}
+                          className="block w-full text-left text-sm px-3 py-1.5 hover:bg-black/5"
+                        >
+                          {m.ad}
+                        </button>
+                      ))}
+                      {durum.masalar.filter((m) => m.durum === "dolu" && m.id !== seciliMasa.id).length === 0 && (
+                        <div className="text-xs opacity-40 px-3 pb-1">Dolu başka masa yok</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
               <button onClick={drawerKapat} className="opacity-40 hover:opacity-80">
                 <X size={18} />
               </button>
@@ -2948,17 +3144,29 @@ export default function AdisyoUygulamasi() {
                     </div>
 
                     <div className="flex-1 overflow-y-auto p-3 grid grid-cols-2 gap-2 content-start">
-                      {(menu.find((k) => k.id === aktifKategoriId)?.urunler || []).map((urun) => (
-                        <button
-                          key={urun.id}
-                          onClick={() => sepeteEkle(urun)}
-                          style={{ background: CARD, borderColor: LINE }}
-                          className="text-left rounded-lg border p-3 hover:shadow-sm transition-shadow"
-                        >
-                          <div className="text-sm font-medium leading-snug">{urun.ad}</div>
-                          <div className="text-xs opacity-60 mt-1">{paraFormat(urun.fiyat)}</div>
-                        </button>
-                      ))}
+                      {(menu.find((k) => k.id === aktifKategoriId)?.urunler || []).map((urun) => {
+                        const sepettekiAdet = sepet[urun.id] || 0;
+                        const stokVar = urun.stokAdedi == null || urun.stokAdedi - sepettekiAdet > 0;
+                        return (
+                          <button
+                            key={urun.id}
+                            onClick={() => stokVar && sepeteEkle(urun)}
+                            disabled={!stokVar}
+                            style={{ background: CARD, borderColor: LINE, opacity: stokVar ? 1 : 0.4 }}
+                            className="text-left rounded-lg border p-3 hover:shadow-sm transition-shadow disabled:cursor-not-allowed"
+                          >
+                            <div className="text-sm font-medium leading-snug">{urun.ad}</div>
+                            <div className="text-xs opacity-60 mt-1 flex items-center justify-between">
+                              <span>{paraFormat(urun.fiyat)}</span>
+                              {urun.stokAdedi != null && (
+                                <span style={{ color: urun.stokAdedi - sepettekiAdet <= 0 ? RUST : undefined }}>
+                                  {urun.stokAdedi - sepettekiAdet <= 0 ? "Tükendi" : `Stok: ${urun.stokAdedi - sepettekiAdet}`}
+                                </span>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
                       {menu.length === 0 && (
                         <div className="col-span-2 text-xs opacity-50 text-center py-6">
                           Henüz menü eklenmedi. Yönetim → Menü sekmesinden ekleyebilirsin.
