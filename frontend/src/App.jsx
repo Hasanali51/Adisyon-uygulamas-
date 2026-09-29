@@ -589,6 +589,9 @@ export default function AdisyoUygulamasi() {
 
   const [menuAcik, setMenuAcik] = useState(false); // sol taraftaki 3 çizgi (☰) menü
   const [masaIslemMenuAcik, setMasaIslemMenuAcik] = useState(false); // sipariş çekmecesindeki "Taşı/Birleştir" menüsü
+  const [veresiyeSecimAcik, setVeresiyeSecimAcik] = useState(false); // ödemede "Veresiye" seçilince açılan müşteri seçici
+  const [yeniMusteriAdi, setYeniMusteriAdi] = useState("");
+  const [yeniMusteriTel, setYeniMusteriTel] = useState("");
   const [onizlemeSecimi, setOnizlemeSecimi] = useState(null); // Ayarlar > Fiş Önizleme'de seçilen geçmiş sipariş
   const [yaziciListesi, setYaziciListesi] = useState([]); // Electron'dan gelen sistem yazıcıları
 
@@ -1042,13 +1045,35 @@ export default function AdisyoUygulamasi() {
   const secimiTemizle = () => setOdemeSecim({});
   const seciliToplam = acikSiparis.reduce((t, u) => t + u.fiyat * Math.min(odemeSecim[u.id] || 0, u.adet), 0);
 
-  const hesabiKapat = (yontem) => {
+  // ---- Müşteri / Cari (borç-alacak) yönetimi ----
+  const musteriler = durum.musteriler || [];
+  const musteriEkle = (ad, telefon) => {
+    if (!ad.trim()) return null;
+    const yeni = { id: yeniId("mu"), ad: ad.trim(), telefon: (telefon || "").trim(), bakiye: 0 };
+    kaydet({ ...durum, musteriler: [...musteriler, yeni] });
+    return yeni.id;
+  };
+  const musteriSil = (musteriId) => {
+    kaydet({ ...durum, musteriler: musteriler.filter((m) => m.id !== musteriId) });
+  };
+  // Müşteriden nakit/kart tahsilat alındığında borcunu azaltır (tamamen kapatmaz,
+  // kısmi ödeme de yapılabilir).
+  const musteriTahsilat = (musteriId, tutar) => {
+    if (!tutar || tutar <= 0) return;
+    kaydet({
+      ...durum,
+      musteriler: musteriler.map((m) => (m.id === musteriId ? { ...m, bakiye: Math.max(0, m.bakiye - tutar) } : m)),
+    });
+  };
+
+  const hesabiKapat = (yontem, musteriId) => {
     if (!seciliMasa || seciliToplam <= 0) return;
     const odenenSatirlar = acikSiparis
       .map((u) => ({ ...u, secilen: Math.min(odemeSecim[u.id] || 0, u.adet) }))
       .filter((u) => u.secilen > 0)
       .map((u) => ({ id: u.id, ad: u.ad, fiyat: u.fiyat, adet: u.secilen }));
     const yeniSiparisNo = (durum.siparisSayaci || 100) + 1;
+    const musteri = yontem === "Veresiye" ? musteriler.find((m) => m.id === musteriId) : null;
     const kayit = {
       id: yeniId("s"),
       siparisNo: yeniSiparisNo,
@@ -1056,6 +1081,8 @@ export default function AdisyoUygulamasi() {
       urunler: odenenSatirlar,
       toplam: seciliToplam,
       yontem,
+      musteriId: musteri?.id || null,
+      musteriAdi: musteri?.ad || null,
       kapanisZamani: Date.now(),
     };
     const kalanUrunler = acikSiparis
@@ -1066,7 +1093,16 @@ export default function AdisyoUygulamasi() {
         ? { ...m, urunler: kalanUrunler, durum: kalanUrunler.length ? "dolu" : "bos", acilisZamani: kalanUrunler.length ? m.acilisZamani : null }
         : m
     );
-    kaydet({ ...durum, masalar: yeniMasalar, gecmis: [kayit, ...durum.gecmis].slice(0, 100), siparisSayaci: yeniSiparisNo });
+    const yeniMusteriler = musteri
+      ? musteriler.map((m) => (m.id === musteri.id ? { ...m, bakiye: m.bakiye + seciliToplam } : m))
+      : musteriler;
+    kaydet({
+      ...durum,
+      masalar: yeniMasalar,
+      gecmis: [kayit, ...durum.gecmis].slice(0, 100),
+      siparisSayaci: yeniSiparisNo,
+      musteriler: yeniMusteriler,
+    });
     setOdemeSecim({});
     setOdenenFis(kayit);
   };
@@ -1300,9 +1336,44 @@ export default function AdisyoUygulamasi() {
     return true;
   });
   const raporToplam = filtreliGecmis.reduce((t, k) => t + k.toplam, 0);
+
+  // Rapor listesini Excel'de açılabilir bir CSV dosyası olarak indirir.
+  // Excel'in Türkçe sürümü noktalı virgülü (;) varsayılan ayraç olarak
+  // beklediği için onu kullanıyoruz, yoksa tüm satır tek hücreye sıkışır.
+  const raporCsvIndir = (kayitlar) => {
+    const kacir = (s) => `"${String(s ?? "").replace(/"/g, '""')}"`;
+    const basliklar = ["Siparis No", "Masa/Kaynak", "Tarih", "Saat", "Urunler", "Tutar", "Odeme Yontemi"];
+    const satirlar = kayitlar.map((k) => {
+      const tarih = new Date(k.kapanisZamani);
+      const urunOzet = k.urunler.map((u) => `${u.adet}x ${u.ad}`).join(", ");
+      return [
+        k.siparisNo ?? "",
+        k.masaAdi,
+        tarih.toLocaleDateString("tr-TR"),
+        tarih.toLocaleTimeString("tr-TR"),
+        urunOzet,
+        k.toplam,
+        k.yontem,
+      ].map(kacir).join(";");
+    });
+    const icerik = "\uFEFF" + [basliklar.map(kacir).join(";"), ...satirlar].join("\r\n");
+    const blob = new Blob([icerik], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const tarihEtiketi = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `adisyo-rapor-${tarihEtiketi}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
   const raporNakit = filtreliGecmis.filter((k) => k.yontem === "Nakit").reduce((t, k) => t + k.toplam, 0);
   const raporKart = filtreliGecmis.filter((k) => k.yontem === "Kart").reduce((t, k) => t + k.toplam, 0);
-  const raporPaket = filtreliGecmis.filter((k) => k.yontem !== "Nakit" && k.yontem !== "Kart").reduce((t, k) => t + k.toplam, 0);
+  const raporVeresiye = filtreliGecmis.filter((k) => k.yontem === "Veresiye").reduce((t, k) => t + k.toplam, 0);
+  const raporPaket = filtreliGecmis
+    .filter((k) => k.yontem !== "Nakit" && k.yontem !== "Kart" && k.yontem !== "Veresiye")
+    .reduce((t, k) => t + k.toplam, 0);
 
   // Hangi üründen kaç adet / ne kadar ciro yapıldığı (seçili tarih aralığında)
   const urunBazliSatis = (() => {
@@ -1969,6 +2040,7 @@ export default function AdisyoUygulamasi() {
               { id: "masalar", ad: "Masalar" },
               { id: "paket", ad: "Paket Kutucukları" },
               { id: "menu", ad: "Menü" },
+              { id: "musteriler", ad: "Müşteriler" },
               { id: "yazici", ad: "Yazıcı & İşletme" },
             ].map((s) => (
               <button
@@ -2186,6 +2258,84 @@ export default function AdisyoUygulamasi() {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {ayarlarSekme === "musteriler" && (
+            <div className="flex flex-col gap-5">
+              <div style={{ background: CARD, borderColor: LINE }} className="rounded-lg border p-4 flex flex-col gap-3">
+                <div className="text-sm font-medium">Yeni Müşteri Ekle</div>
+                <div className="flex gap-2">
+                  <input
+                    value={yeniMusteriAdi}
+                    onChange={(e) => setYeniMusteriAdi(e.target.value)}
+                    placeholder="Ad Soyad"
+                    style={{ borderColor: LINE }}
+                    className="border rounded px-3 py-2 text-sm flex-1 outline-none"
+                  />
+                  <input
+                    value={yeniMusteriTel}
+                    onChange={(e) => setYeniMusteriTel(e.target.value)}
+                    placeholder="Telefon"
+                    style={{ borderColor: LINE }}
+                    className="border rounded px-3 py-2 text-sm w-36 outline-none"
+                  />
+                  <button
+                    onClick={() => {
+                      if (musteriEkle(yeniMusteriAdi, yeniMusteriTel)) {
+                        setYeniMusteriAdi("");
+                        setYeniMusteriTel("");
+                      }
+                    }}
+                    disabled={!yeniMusteriAdi.trim()}
+                    style={{ background: WINE }}
+                    className="text-white rounded-lg px-4 text-sm font-medium disabled:opacity-40"
+                  >
+                    Ekle
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ background: CARD, borderColor: LINE }} className="rounded-lg border divide-y" >
+                {musteriler.length === 0 && (
+                  <div className="p-4 text-sm opacity-50">Henüz kayıtlı müşteri yok.</div>
+                )}
+                {musteriler.map((m) => (
+                  <div key={m.id} style={{ borderColor: LINE }} className="p-4 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium">{m.ad}</div>
+                      {m.telefon && <div className="text-xs opacity-50">{m.telefon}</div>}
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div
+                        className="text-sm font-semibold"
+                        style={{ color: m.bakiye > 0 ? RUST : undefined }}
+                      >
+                        {m.bakiye > 0 ? `Borç: ${paraFormat(m.bakiye)}` : "Borcu yok"}
+                      </div>
+                      {m.bakiye > 0 && (
+                        <button
+                          onClick={() => {
+                            const girilen = window.prompt(
+                              `${m.ad} için tahsil edilen tutarı gir:`,
+                              String(m.bakiye)
+                            );
+                            const tutar = parseFloat(girilen);
+                            if (tutar > 0) musteriTahsilat(m.id, tutar);
+                          }}
+                          style={{ borderColor: MOSS, color: MOSS }}
+                          className="text-xs border rounded px-2.5 py-1.5"
+                        >
+                          Tahsilat Al
+                        </button>
+                      )}
+                      <button onClick={() => musteriSil(m.id)} className="opacity-40 hover:opacity-90">
+                        <X size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -2535,7 +2685,8 @@ export default function AdisyoUygulamasi() {
             </div>
           )}
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+          <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 flex-1">
             <div style={{ background: CARD, borderColor: LINE }} className="rounded-lg border p-3.5">
               <div className="text-xs opacity-60 mb-1">Toplam Ciro</div>
               <div className="text-lg font-semibold">{paraFormat(raporToplam)}</div>
@@ -2553,6 +2704,18 @@ export default function AdisyoUygulamasi() {
               <div className="text-xs opacity-70 mb-1" style={{ color: "#5D3EBC" }}>Paket</div>
               <div className="text-lg font-semibold" style={{ color: "#5D3EBC" }}>{paraFormat(raporPaket)}</div>
             </div>
+            <div style={{ background: "#FCE7DA" }} className="rounded-lg p-3.5">
+              <div className="text-xs opacity-70 mb-1" style={{ color: "#B4530A" }}>Veresiye</div>
+              <div className="text-lg font-semibold" style={{ color: "#B4530A" }}>{paraFormat(raporVeresiye)}</div>
+            </div>
+            </div>
+            <button
+              onClick={() => raporCsvIndir(filtreliGecmis)}
+              style={{ borderColor: LINE }}
+              className="border rounded-lg px-4 py-2.5 text-sm font-medium opacity-80 hover:opacity-100 whitespace-nowrap"
+            >
+              Excel'e Aktar (CSV)
+            </button>
           </div>
 
           <div style={{ background: CARD, borderColor: LINE }} className="rounded-lg border mb-6 overflow-hidden">
@@ -3293,26 +3456,104 @@ export default function AdisyoUygulamasi() {
               <div className="flex-1 flex flex-col p-5">
                 <div className="text-xs opacity-60 mb-1">{seciliMasa.ad} · Ödenecek Tutar</div>
                 <div className="text-4xl font-semibold mb-8">{paraFormat(seciliToplam)}</div>
-                <div className="text-xs opacity-60 mb-2">Ödeme yöntemi seç</div>
-                <div className="grid grid-cols-2 gap-3 mb-auto">
-                  <button
-                    onClick={() => hesabiKapat("Nakit")}
-                    style={{ background: MOSS_BG, borderColor: MOSS }}
-                    className="rounded-lg border-2 py-5 flex flex-col items-center gap-2"
-                  >
-                    <Banknote size={22} color={MOSS} />
-                    <span className="text-sm font-medium" style={{ color: MOSS }}>Nakit</span>
-                  </button>
-                  <button
-                    onClick={() => hesabiKapat("Kart")}
-                    style={{ background: MOSS_BG, borderColor: MOSS }}
-                    className="rounded-lg border-2 py-5 flex flex-col items-center gap-2"
-                  >
-                    <CreditCard size={22} color={MOSS} />
-                    <span className="text-sm font-medium" style={{ color: MOSS }}>Kart</span>
-                  </button>
-                </div>
-                <button onClick={() => setOdemeEkrani(false)} className="text-xs opacity-60 mt-6 self-center">
+
+                {!veresiyeSecimAcik ? (
+                  <>
+                    <div className="text-xs opacity-60 mb-2">Ödeme yöntemi seç</div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        onClick={() => hesabiKapat("Nakit")}
+                        style={{ background: MOSS_BG, borderColor: MOSS }}
+                        className="rounded-lg border-2 py-5 flex flex-col items-center gap-2"
+                      >
+                        <Banknote size={22} color={MOSS} />
+                        <span className="text-sm font-medium" style={{ color: MOSS }}>Nakit</span>
+                      </button>
+                      <button
+                        onClick={() => hesabiKapat("Kart")}
+                        style={{ background: MOSS_BG, borderColor: MOSS }}
+                        className="rounded-lg border-2 py-5 flex flex-col items-center gap-2"
+                      >
+                        <CreditCard size={22} color={MOSS} />
+                        <span className="text-sm font-medium" style={{ color: MOSS }}>Kart</span>
+                      </button>
+                    </div>
+                    <button
+                      onClick={() => setVeresiyeSecimAcik(true)}
+                      style={{ borderColor: LINE }}
+                      className="rounded-lg border-2 py-4 mt-3 text-sm font-medium opacity-80"
+                    >
+                      Veresiye (Müşteri Hesabına Yaz)
+                    </button>
+                    <div className="mb-auto" />
+                  </>
+                ) : (
+                  <>
+                    <div className="text-xs opacity-60 mb-2">Müşteri seç</div>
+                    <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto mb-3">
+                      {musteriler.length === 0 && (
+                        <div className="text-xs opacity-40">Henüz kayıtlı müşteri yok, aşağıdan ekle.</div>
+                      )}
+                      {musteriler.map((m) => (
+                        <button
+                          key={m.id}
+                          onClick={() => hesabiKapat("Veresiye", m.id)}
+                          style={{ borderColor: LINE }}
+                          className="flex items-center justify-between border rounded-lg px-3 py-2 text-sm hover:bg-black/5"
+                        >
+                          <span>{m.ad}</span>
+                          <span className="opacity-60">
+                            {m.bakiye > 0 ? `Mevcut borç: ${paraFormat(m.bakiye)}` : "Borcu yok"}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                    <div className="text-xs opacity-60 mb-1">Yeni müşteri ekle</div>
+                    <div className="flex flex-col gap-2 mb-3">
+                      <input
+                        value={yeniMusteriAdi}
+                        onChange={(e) => setYeniMusteriAdi(e.target.value)}
+                        placeholder="Ad Soyad"
+                        style={{ borderColor: LINE }}
+                        className="border rounded px-3 py-2 text-sm outline-none"
+                      />
+                      <input
+                        value={yeniMusteriTel}
+                        onChange={(e) => setYeniMusteriTel(e.target.value)}
+                        placeholder="Telefon (opsiyonel)"
+                        style={{ borderColor: LINE }}
+                        className="border rounded px-3 py-2 text-sm outline-none"
+                      />
+                      <button
+                        onClick={() => {
+                          const id = musteriEkle(yeniMusteriAdi, yeniMusteriTel);
+                          if (id) {
+                            setYeniMusteriAdi("");
+                            setYeniMusteriTel("");
+                            hesabiKapat("Veresiye", id);
+                          }
+                        }}
+                        disabled={!yeniMusteriAdi.trim()}
+                        style={{ background: WINE }}
+                        className="text-white rounded-lg py-2.5 text-sm font-medium disabled:opacity-40"
+                      >
+                        Ekle ve Veresiye Yaz
+                      </button>
+                    </div>
+                    <button onClick={() => setVeresiyeSecimAcik(false)} className="text-xs opacity-60 self-center">
+                      ← Ödeme yöntemine geri dön
+                    </button>
+                    <div className="mb-auto" />
+                  </>
+                )}
+
+                <button
+                  onClick={() => {
+                    setOdemeEkrani(false);
+                    setVeresiyeSecimAcik(false);
+                  }}
+                  className="text-xs opacity-60 mt-6 self-center"
+                >
                   ← Geri dön
                 </button>
               </div>

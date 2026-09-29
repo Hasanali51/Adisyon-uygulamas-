@@ -29,6 +29,7 @@ const varsayilanDurum = () => ({
     acilisZamani: null,
   })),
   gecmis: [],
+  musteriler: [],
   menu: [
     {
       id: "k1",
