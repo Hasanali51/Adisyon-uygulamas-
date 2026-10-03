@@ -5,6 +5,7 @@ import {
   Package, Ban, Check, Menu, Truck, Boxes, Store, Lock, LogOut,
   Plug, Copy, RefreshCw, Download, Upload,
 } from "lucide-react";
+import QRCode from "qrcode";
 
 // Normalde frontend ve backend AYNI sunucudan (aynı adresten) servis edilir
 // (bkz. server.js -> express.static), bu yüzden VITE_API_URL boş bırakılabilir
@@ -196,6 +197,110 @@ function TunelAyarlariKarti({ deger, onKaydet }) {
         </button>
         <div className="text-[11px] opacity-50">
           Not: Değişikliğin etkili olması için Adisyo'yu kapat, tekrar aç.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// QR Menü: müşterinin telefonunda açılan, sadece okunur menü sayfasının (/menu)
+// QR kodunu üretir. Masalara konulmak üzere yazdırılabilir ya da PNG indirilebilir.
+function QrMenuKarti({ varsayilanAdres, isletmeAdi }) {
+  const [adres, setAdres] = useState(varsayilanAdres);
+  const [qr, setQr] = useState("");
+  useEffect(() => setAdres(varsayilanAdres), [varsayilanAdres]);
+
+  useEffect(() => {
+    let iptal = false;
+    if (!adres.trim()) {
+      setQr("");
+      return undefined;
+    }
+    QRCode.toDataURL(adres.trim(), { width: 720, margin: 2, errorCorrectionLevel: "M" })
+      .then((u) => !iptal && setQr(u))
+      .catch(() => !iptal && setQr(""));
+    return () => {
+      iptal = true;
+    };
+  }, [adres]);
+
+  const yerelAdres = /^(https?:\/\/)?(localhost|127\.0\.0\.1)/i.test(adres.trim());
+
+  // window.open yerine gizli iframe: hem tarayıcıda hem Electron'da sorunsuz yazdırır.
+  const yazdir = () => {
+    if (!qr) return;
+    const kacis = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const f = document.createElement("iframe");
+    f.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;";
+    document.body.appendChild(f);
+    const d = f.contentWindow.document;
+    d.open();
+    d.write(`<!doctype html><html><head><meta charset="utf-8"><title>QR Menü</title>
+      <style>@page{margin:12mm} body{font-family:Arial,sans-serif;text-align:center;margin:0}
+      h1{font-size:28px;margin:24px 0 4px} p{font-size:18px;margin:6px 0} img{width:300px;height:300px;margin:18px 0 6px}
+      small{display:block;font-size:11px;color:#555;word-break:break-all}</style></head>
+      <body><h1>${kacis(isletmeAdi || "Menü")}</h1><p>Menüyü görmek için kodu telefonunla okut</p>
+      <img src="${qr}" alt="QR"><small>${kacis(adres.trim())}</small></body></html>`);
+    d.close();
+    const img = d.querySelector("img");
+    const bas = () => {
+      f.contentWindow.focus();
+      f.contentWindow.print();
+      setTimeout(() => f.remove(), 1500);
+    };
+    if (img.complete) bas();
+    else img.onload = bas;
+  };
+
+  return (
+    <div style={{ background: CARD, borderColor: LINE }} className="rounded-lg border overflow-hidden">
+      <div style={{ background: WINE }} className="px-4 py-2.5">
+        <span className="text-white text-sm font-semibold">QR Menü</span>
+      </div>
+      <div className="p-4 flex flex-col gap-3">
+        <div className="text-xs opacity-60 leading-relaxed">
+          Müşteri bu kodu telefonuyla okutunca menüyü ve fiyatları görür (sipariş vermez, sadece bakar).
+          Stoğu biten ürünler otomatik "Tükendi" görünür. Kodu yazdırıp masalara koyabilirsin.
+        </div>
+        <div>
+          <label className="text-xs opacity-60 mb-1 block">Menü adresi</label>
+          <input
+            value={adres}
+            onChange={(e) => setAdres(e.target.value)}
+            placeholder="https://adresin.ngrok-free.dev/menu"
+            style={{ borderColor: LINE }}
+            className="border rounded px-3 py-2 text-sm w-full outline-none"
+          />
+          {yerelAdres && (
+            <div style={{ color: RUST }} className="text-[11px] mt-1">
+              Bu adres yalnızca bu bilgisayarda açılır; müşterinin telefonu açamaz. Yukarıdaki Otomatik Tünel'i
+              kur (internetten erişim) ya da aynı WiFi için bilgisayarın ağ adresini (192.168.x.x) yaz.
+            </div>
+          )}
+        </div>
+        {qr ? (
+          <div className="flex flex-col items-center gap-3">
+            <img src={qr} alt="QR Menü" style={{ borderColor: LINE }} className="w-48 h-48 border rounded" />
+            <div className="flex gap-2 w-full">
+              <button onClick={yazdir} style={{ background: WINE }} className="flex-1 text-white text-sm font-medium rounded-lg py-2.5 flex items-center justify-center gap-2">
+                <Printer size={15} /> Yazdır
+              </button>
+              <a
+                href={qr}
+                download="menu-qr.png"
+                style={{ borderColor: LINE }}
+                className="flex-1 border text-sm font-medium rounded-lg py-2.5 flex items-center justify-center gap-2"
+              >
+                <Download size={15} /> PNG indir
+              </a>
+            </div>
+          </div>
+        ) : (
+          <div className="text-xs opacity-50">QR kodu için bir adres yaz.</div>
+        )}
+        <div className="text-[11px] opacity-50 leading-relaxed">
+          İpucu: Ücretsiz ngrok adreslerinde müşteri ilk açılışta bir "siteyi ziyaret et" uyarısı görebilir,
+          "Visit Site" demesi yeterli. Bu uyarı olmasın istersen kendi alan adını bağlayabilirsin.
         </div>
       </div>
     </div>
@@ -1979,6 +2084,11 @@ export default function AdisyoUygulamasi() {
       {gorunum === "entegrasyon" && (
         <div className="p-4 sm:p-6 max-w-2xl flex flex-col gap-5">
           <TunelAyarlariKarti deger={tunelAyarlari} onKaydet={tunelAyarlariKaydet} />
+
+          <QrMenuKarti
+            varsayilanAdres={`${(genelErisimAdresi || window.location.origin).replace(/\/$/, "")}/menu`}
+            isletmeAdi={durum.isletme?.ad || durum.lisans?.isletmeAdi}
+          />
 
           <div style={{ background: RUST_BG, color: RUST }} className="rounded-lg p-4 text-xs leading-relaxed">
             Buraya girdiğin bilgiler bu bilgisayarda saklanır. Trendyol Yemek / Getir Yemek / Yemeksepeti'nin

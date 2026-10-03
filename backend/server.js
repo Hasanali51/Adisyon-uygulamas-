@@ -46,6 +46,25 @@ const CORS_ORIGIN = (process.env.CORS_ORIGIN || "*").split(",").map((s) => s.tri
 app.use(cors({ origin: CORS_ORIGIN }));
 app.use(express.json({ limit: "2mb" }));
 
+// ---------------------------------------------------------------------------
+// Tünel (ngrok) güvenliği
+// ngrok tüneli bu sunucunun TÜM uçlarını internete açar. Oysa dışarıdan sadece
+// iki şeye ihtiyaç var: platform webhook'ları ve müşterinin QR menüsü. Tünel
+// üzerinden gelen istekler (ngrok bunlara x-forwarded-for başlığı ekler) başka
+// hiçbir uca ulaşamasın: yoksa /api/durum üzerinden yönetici PIN'i, API
+// anahtarları ve müşteri borçları dışarıdan okunabilir/değiştirilebilirdi.
+// Aynı WiFi'deki cihazlar (tablet, ikinci kasa, Android uygulaması) bu başlığı
+// taşımaz, etkilenmez.
+// ---------------------------------------------------------------------------
+const TUNEL_IZINLI_YOLLAR = [/^\/menu\/?$/, /^\/api\/webhook\/[^/]+\/?$/, /^\/health$/];
+const tuneldenGelenIstek = (req) => !!(req.headers["x-forwarded-for"] || req.headers["x-forwarded-host"]);
+app.use((req, res, next) => {
+  if (tuneldenGelenIstek(req) && !TUNEL_IZINLI_YOLLAR.some((r) => r.test(req.path))) {
+    return res.status(403).json({ hata: "Bu adres internet üzerinden erişime kapalı." });
+  }
+  next();
+});
+
 // Ekran (frontend) burada, "public" klasöründe derlenmiş halde durur.
 // "cd frontend && npm run build" komutu bu klasörü otomatik doldurur.
 // Böylece kafedeki bilgisayarda TEK bir sunucu (bu dosya) çalıştırmak yeterli
@@ -60,7 +79,12 @@ const yeniId = (on) => `${on}${Date.now()}_${idSayaci++}`;
 // WebSocket: bağlı tüm istemcilere (masa/kasa ekranları) anlık yayın yapar.
 // ---------------------------------------------------------------------------
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: "/ws" });
+// Canlı yayın (/ws) tüm durumu gönderdiği için tünelden gelen bağlantı reddedilir.
+const wss = new WebSocketServer({
+  server,
+  path: "/ws",
+  verifyClient: ({ req }) => !tuneldenGelenIstek(req),
+});
 
 function yayinla(mesaj) {
   const veri = JSON.stringify(mesaj);
@@ -191,6 +215,82 @@ app.post("/api/webhook/:platform", async (req, res) => {
   yayinla({ type: "siparis_geldi", payload: siparis });
 
   res.json({ tamam: true, siparisId: siparis.id });
+});
+
+// ---------------------------------------------------------------------------
+// QR Menü: müşterinin telefonundan açtığı, giriş gerektirmeyen, SADECE OKUNUR
+// menü sayfası. Yalnızca işletme adı, kategori, ürün adı, fiyat ve stok durumu
+// ("Tükendi") gösterir; masa, sipariş, müşteri, PIN gibi hiçbir şey sızmaz.
+// Sayfa tek dosya (satır içi CSS), harici kaynak yok - internet yavaş olsa da açılır.
+// ---------------------------------------------------------------------------
+const htmlKacis = (s) =>
+  String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const tl = (n) => `${(Number(n) || 0).toLocaleString("tr-TR", { maximumFractionDigits: 2 })} ₺`;
+
+function menuSayfasiOlustur(durum) {
+  const ad = (durum.isletme && durum.isletme.ad) || (durum.lisans && durum.lisans.isletmeAdi) || "Menü";
+  const kategoriler = (durum.menu || []).filter((k) => Array.isArray(k.urunler) && k.urunler.length > 0);
+
+  const sekmeler = kategoriler
+    .map((k, i) => `<a href="#k${i}">${htmlKacis(k.kategori)}</a>`)
+    .join("");
+
+  const bolumler = kategoriler
+    .map(
+      (k, i) => `
+    <section id="k${i}">
+      <h2>${htmlKacis(k.kategori)}</h2>
+      ${k.urunler
+        .map((u) => {
+          const tukendi = u.stokAdedi != null && u.stokAdedi <= 0;
+          return `<div class="urun${tukendi ? " tukendi" : ""}">
+            <span class="ad">${htmlKacis(u.ad)}${tukendi ? ' <em>Tükendi</em>' : ""}</span>
+            <span class="fiyat">${tl(u.fiyat)}</span>
+          </div>`;
+        })
+        .join("")}
+    </section>`
+    )
+    .join("");
+
+  return `<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${htmlKacis(ad)} - Menü</title>
+<style>
+  :root { --mavi:#1E4FA3; --acik:#EAF1FB; --cizgi:#D6E2F3; --yazi:#1B2433; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background:#fff; color:var(--yazi); }
+  header { background:var(--mavi); color:#fff; padding:22px 16px 18px; text-align:center; }
+  header h1 { margin:0; font-size:22px; font-weight:700; }
+  header p { margin:4px 0 0; font-size:13px; opacity:.85; }
+  nav { position:sticky; top:0; background:#fff; border-bottom:1px solid var(--cizgi); display:flex; gap:8px; overflow-x:auto; padding:10px 12px; z-index:2; }
+  nav a { flex:none; text-decoration:none; color:var(--mavi); background:var(--acik); border-radius:999px; padding:7px 14px; font-size:14px; font-weight:600; }
+  main { max-width:640px; margin:0 auto; padding:4px 16px 40px; }
+  section { padding-top:8px; scroll-margin-top:56px; }
+  h2 { font-size:17px; color:var(--mavi); border-bottom:2px solid var(--acik); padding-bottom:6px; margin:18px 0 4px; }
+  .urun { display:flex; justify-content:space-between; gap:12px; padding:11px 0; border-bottom:1px solid #eef2f8; font-size:16px; }
+  .fiyat { font-weight:700; white-space:nowrap; color:var(--mavi); }
+  .tukendi { opacity:.45; }
+  .tukendi em { font-style:normal; font-size:12px; background:#fde8e4; color:#b3361f; border-radius:4px; padding:1px 6px; margin-left:6px; }
+  .bos { text-align:center; padding:48px 16px; opacity:.6; }
+  footer { text-align:center; font-size:12px; opacity:.5; padding:0 0 28px; }
+</style>
+</head>
+<body>
+<header><h1>${htmlKacis(ad)}</h1><p>Menü</p></header>
+${kategoriler.length ? `<nav>${sekmeler}</nav><main>${bolumler}</main>` : '<div class="bos">Menü henüz hazırlanmadı.</div>'}
+<footer>Fiyatlar değişiklik gösterebilir.</footer>
+</body>
+</html>`;
+}
+
+app.get("/menu", (req, res) => {
+  res.set("Content-Type", "text/html; charset=utf-8");
+  res.set("Cache-Control", "no-cache");
+  res.send(menuSayfasiOlustur(db.oku()));
 });
 
 // Yukarıdaki hiçbir uca uymayan tüm GET isteklerini ekrana (index.html) yönlendir.
