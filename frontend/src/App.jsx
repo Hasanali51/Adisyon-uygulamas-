@@ -18,6 +18,28 @@ const WS_BASE = API_BASE
   ? API_BASE.replace(/^http/, "ws")
   : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
 
+// Cihaz eşleştirme: ana bilgisayar (localhost) hariç her cihaz (tablet/telefon) bir kez
+// eşleştirilir ve sunucudan uzun bir anahtar alır; bu anahtar her isteğe eklenir.
+const CIHAZ_ANAHTAR_KEY = "adisyo_cihaz_anahtari";
+const cihazAnahtariOku = () => {
+  try {
+    return localStorage.getItem(CIHAZ_ANAHTAR_KEY) || "";
+  } catch (e) {
+    return "";
+  }
+};
+const cihazAnahtariYaz = (v) => {
+  try {
+    localStorage.setItem(CIHAZ_ANAHTAR_KEY, v);
+  } catch (e) {
+    /* yok say */
+  }
+};
+const apiFetch = (url, opts = {}) => {
+  const k = cihazAnahtariOku();
+  return fetch(url, k ? { ...opts, headers: { ...(opts.headers || {}), "x-cihaz-anahtari": k } } : opts);
+};
+
 const INK = "#1E293B";
 const PAPER = "#F3F7FC";
 const CARD = "#FFFFFF";
@@ -593,6 +615,171 @@ function gecenSure(baslangic, simdi) {
   return `${Math.floor(dk / 60)} sa ${dk % 60} dk`;
 }
 
+// Bu cihaz sunucuya henüz eşleştirilmemişse gösterilir. Ana bilgisayarda
+// Yönetici > Entegrasyonlar > "Cihaz Ekle" bölümünden üretilen 6 haneli kod girilir.
+function EslestirmeEkrani() {
+  const [kod, setKod] = useState("");
+  const [ad, setAd] = useState("");
+  const [hata, setHata] = useState("");
+  const [bekle, setBekle] = useState(false);
+
+  const gonder = async (e) => {
+    e.preventDefault();
+    setBekle(true);
+    setHata("");
+    try {
+      const res = await fetch(`${API_BASE}/api/eslestir`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kod: kod.trim(), ad: ad.trim() }),
+      });
+      const veri = await res.json().catch(() => ({}));
+      if (!res.ok || !veri.anahtar) {
+        setHata(veri.hata || "Eşleştirilemedi, tekrar dene.");
+        return;
+      }
+      cihazAnahtariYaz(veri.anahtar);
+      window.location.reload();
+    } catch (err) {
+      setHata("Sunucuya ulaşılamadı.");
+    } finally {
+      setBekle(false);
+    }
+  };
+
+  return (
+    <div style={{ background: "#F3F7FC", color: "#1E293B" }} className="min-h-[500px] flex items-center justify-center font-sans p-6">
+      <form onSubmit={gonder} className="w-full max-w-sm bg-white rounded-xl shadow-lg border p-6 flex flex-col gap-4">
+        <div>
+          <div className="text-lg font-semibold flex items-center gap-2"><Lock size={18} /> Cihazı Eşleştir</div>
+          <div className="text-sm opacity-60 mt-1">
+            Bu cihaz henüz kasaya bağlı değil. Ana bilgisayarda <b>Yönetici → Entegrasyonlar → Cihaz Ekle</b> bölümünden
+            kod üret ve buraya gir.
+          </div>
+        </div>
+        <div>
+          <div className="text-xs opacity-60 mb-1">6 haneli kod</div>
+          <input
+            value={kod}
+            onChange={(e) => setKod(e.target.value.replace(/\D/g, "").slice(0, 6))}
+            inputMode="numeric"
+            autoFocus
+            className="border rounded px-3 py-2 text-lg w-full outline-none font-mono tracking-[0.4em] text-center"
+            placeholder="000000"
+          />
+        </div>
+        <div>
+          <div className="text-xs opacity-60 mb-1">Cihaz adı (isteğe bağlı)</div>
+          <input
+            value={ad}
+            onChange={(e) => setAd(e.target.value)}
+            className="border rounded px-3 py-2 text-sm w-full outline-none"
+            placeholder="Örn: Garson tableti"
+          />
+        </div>
+        {hata && <div className="text-sm text-red-600">{hata}</div>}
+        <button
+          type="submit"
+          disabled={bekle || kod.length !== 6}
+          style={{ background: "#1D4ED8" }}
+          className="text-white rounded-lg py-2.5 text-sm font-medium disabled:opacity-60"
+        >
+          {bekle ? "Eşleştiriliyor…" : "Eşleştir"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+// Yönetici ekranı: yeni cihaz için kod üretir, eşleşmiş cihazları listeler/kaldırır.
+function CihazlarKarti() {
+  const [kod, setKod] = useState(null); // { kod, bitis }
+  const [kalan, setKalan] = useState(0);
+  const [liste, setListe] = useState([]);
+  const [hata, setHata] = useState("");
+
+  const listeyiYukle = useCallback(async () => {
+    try {
+      const res = await apiFetch(`${API_BASE}/api/cihazlar`);
+      if (res.ok) setListe(await res.json());
+    } catch (e) {
+      /* yok say */
+    }
+  }, []);
+  useEffect(() => {
+    listeyiYukle();
+  }, [listeyiYukle]);
+
+  useEffect(() => {
+    if (!kod) return undefined;
+    const z = setInterval(() => {
+      const k = Math.max(0, Math.round((kod.bitis - Date.now()) / 1000));
+      setKalan(k);
+      if (k === 0) setKod(null);
+      else if (k % 5 === 0) listeyiYukle(); // eşleşme olduysa listeye düşsün
+    }, 1000);
+    return () => clearInterval(z);
+  }, [kod, listeyiYukle]);
+
+  const kodUret = async () => {
+    setHata("");
+    try {
+      const res = await apiFetch(`${API_BASE}/api/eslestirme-kodu`, { method: "POST" });
+      if (!res.ok) throw new Error();
+      const v = await res.json();
+      setKod({ kod: v.kod, bitis: Date.now() + v.saniye * 1000 });
+      setKalan(v.saniye);
+    } catch (e) {
+      setHata("Kod üretilemedi.");
+    }
+  };
+
+  const kaldir = async (c) => {
+    if (!window.confirm(`"${c.ad}" cihazının erişimi kaldırılsın mı?`)) return;
+    await apiFetch(`${API_BASE}/api/cihazlar/${c.id}`, { method: "DELETE" });
+    listeyiYukle();
+  };
+
+  return (
+    <div style={{ background: CARD, borderColor: LINE }} className="rounded-lg border overflow-hidden">
+      <div style={{ background: WINE }} className="px-4 py-2.5">
+        <span className="text-white text-sm font-semibold">Cihaz Ekle (Tablet / Telefon)</span>
+      </div>
+      <div className="p-4 flex flex-col gap-3">
+        <div className="text-xs opacity-60 leading-relaxed">
+          Güvenlik için aynı WiFi'ye bağlı herkes kasaya erişemez; sadece bu bilgisayar ve eşleştirdiğin cihazlar
+          erişir. Yeni tablet/telefon eklemek için kod üret, o cihazda adresi açıp kodu gir (5 dakika geçerli,
+          tek kullanımlık).
+        </div>
+        {kod ? (
+          <div className="text-center">
+            <div className="font-mono text-4xl tracking-[0.3em] font-bold" style={{ color: WINE }}>{kod.kod}</div>
+            <div className="text-xs opacity-50 mt-1">{Math.floor(kalan / 60)}:{String(kalan % 60).padStart(2, "0")} içinde gir</div>
+          </div>
+        ) : (
+          <button onClick={kodUret} style={{ background: WINE }} className="text-white text-sm font-medium rounded-lg py-2.5">
+            Eşleştirme Kodu Üret
+          </button>
+        )}
+        {hata && <div style={{ color: RUST }} className="text-xs">{hata}</div>}
+        <div>
+          <div className="text-xs opacity-60 mb-1">Eşleşmiş cihazlar</div>
+          {liste.length === 0 && <div className="text-xs opacity-40">Henüz eşleşmiş cihaz yok.</div>}
+          {liste.map((c) => (
+            <div key={c.id} style={{ borderColor: LINE }} className="flex items-center justify-between border-t py-2 text-sm">
+              <div>
+                {c.ad}
+                <span className="text-[11px] opacity-40 ml-2">{new Date(c.tarih).toLocaleDateString("tr-TR")}</span>
+              </div>
+              <button onClick={() => kaldir(c)} style={{ color: RUST }} className="text-xs">Kaldır</button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LisansEkrani({ onDogrula }) {
   const [isletmeAdi, setIsletmeAdi] = useState("");
   const [anahtar, setAnahtar] = useState("");
@@ -666,6 +853,7 @@ export default function AdisyoUygulamasi() {
   const [durum, setDurum] = useState(null);
   const [yukleniyor, setYukleniyor] = useState(true);
   const [hataMesaji, setHataMesaji] = useState("");
+  const [eslestirmeGerekli, setEslestirmeGerekli] = useState(false);
   const [gorunum, setGorunum] = useState("masalar"); // masalar | ayarlar | rapor | paket
   const [ayarlarSekme, setAyarlarSekme] = useState("masalar"); // masalar | menu | yazici
 
@@ -731,7 +919,13 @@ export default function AdisyoUygulamasi() {
 
   const yukle = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/durum`);
+      const res = await apiFetch(`${API_BASE}/api/durum`);
+      if (res.status === 401) {
+        // Bu cihaz henüz eşleştirilmemiş: varsayılan durumla ekranı açıp sunucudaki
+        // gerçek veriyi ezme riskine girmeyelim, eşleştirme ekranını göster.
+        setEslestirmeGerekli(true);
+        return;
+      }
       if (!res.ok) throw new Error("durum-alinamadi");
       const data = await res.json();
       setDurum(data && Object.keys(data).length ? data : varsayilanDurumUret());
@@ -777,7 +971,8 @@ export default function AdisyoUygulamasi() {
     let yenidenBaglanTimer;
 
     const baglan = () => {
-      ws = new WebSocket(`${WS_BASE}/ws`);
+      const k = cihazAnahtariOku();
+      ws = new WebSocket(`${WS_BASE}/ws${k ? `?k=${encodeURIComponent(k)}` : ""}`);
       ws.onopen = () => setBaglantiDurumu("bagli");
       ws.onclose = () => {
         setBaglantiDurumu("kopuk");
@@ -862,11 +1057,15 @@ export default function AdisyoUygulamasi() {
 
   const kalicKaydet = useCallback(async (yeniDurum) => {
     try {
-      const res = await fetch(`${API_BASE}/api/durum`, {
+      const res = await apiFetch(`${API_BASE}/api/durum`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(yeniDurum),
       });
+      if (res.status === 401) {
+        setEslestirmeGerekli(true);
+        return;
+      }
       if (res.ok) {
         setHataMesaji("");
         kaydetDenemeRef.current = 0;
@@ -951,6 +1150,8 @@ export default function AdisyoUygulamasi() {
     };
     okuyucu.readAsText(dosya);
   };
+
+  if (eslestirmeGerekli) return <EslestirmeEkrani />;
 
   if (yukleniyor || !durum) {
     return (
@@ -2084,6 +2285,8 @@ export default function AdisyoUygulamasi() {
       {gorunum === "entegrasyon" && (
         <div className="p-4 sm:p-6 max-w-2xl flex flex-col gap-5">
           <TunelAyarlariKarti deger={tunelAyarlari} onKaydet={tunelAyarlariKaydet} />
+
+          <CihazlarKarti />
 
           <QrMenuKarti
             varsayilanAdres={`${(genelErisimAdresi || window.location.origin).replace(/\/$/, "")}/menu`}

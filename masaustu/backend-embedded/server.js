@@ -85,11 +85,12 @@ const yeniId = (on) => `${on}${Date.now()}_${idSayaci++}`;
 // WebSocket: bağlı tüm istemcilere (masa/kasa ekranları) anlık yayın yapar.
 // ---------------------------------------------------------------------------
 const server = http.createServer(app);
-// Canlı yayın (/ws) tüm durumu gönderdiği için tünelden gelen bağlantı reddedilir.
+// Canlı yayın (/ws) tüm durumu gönderdiği için tünelden gelen ve eşleştirilmemiş
+// cihazlardan gelen bağlantılar reddedilir (bkz. "Cihaz eşleştirme" bölümü).
 const wss = new WebSocketServer({
   server,
   path: "/ws",
-  verifyClient: ({ req }) => !tuneldenGelenIstek(req),
+  verifyClient: ({ req }) => !tuneldenGelenIstek(req) && yetkiliMi(req),
 });
 
 function yayinla(mesaj) {
@@ -99,7 +100,8 @@ function yayinla(mesaj) {
   });
 }
 
-wss.on("connection", (ws) => {
+wss.on("connection", (ws, req) => {
+  ws.cihazHash = cihazHashiAl(req);
   // Yeni bağlanan istemciye mevcut durumu hemen gönder.
   ws.send(JSON.stringify({ type: "durum", payload: db.oku() }));
 });
@@ -123,11 +125,11 @@ app.post("/api/lisans-dogrula", (req, res) => {
 });
 
 // Uygulamanın (frontend) tüm state'i okuduğu/yazdığı uç noktalar.
-app.get("/api/durum", (req, res) => {
+app.get("/api/durum", yetkiGerekli, (req, res) => {
   res.json(db.oku());
 });
 
-app.post("/api/durum", yaziKorumasi, async (req, res) => {
+app.post("/api/durum", yetkiGerekli, yaziKorumasi, async (req, res) => {
   const yeniDurum = req.body;
   if (!yeniDurum || typeof yeniDurum !== "object") {
     return res.status(400).json({ hata: "Geçersiz gövde." });
@@ -139,6 +141,87 @@ app.post("/api/durum", yaziKorumasi, async (req, res) => {
   } catch (e) {
     res.status(500).json({ hata: "Kaydedilemedi." });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Cihaz eşleştirme (erişim kontrolü)
+// Aynı WiFi'ye bağlı HERKES (müşteriler dahil) sunucuya ulaşabilir; ama durum
+// verisi (yönetici PIN'i, müşteri borçları, API anahtarları) sadece şunlara açıktır:
+//  1) Sunucunun çalıştığı bilgisayarın kendisi (localhost) - ana kasa, ekstra adım yok.
+//  2) Eşleştirilmiş cihazlar (tablet/telefon): Yönetici > Entegrasyonlar'da üretilen
+//     6 haneli kodu cihazda bir kez girerek eşleşir ve uzun, rastgele bir anahtar alır.
+// Eşleşmemiş cihazlar yalnızca /menu (QR menü) ve eşleştirme ekranını görür.
+// ---------------------------------------------------------------------------
+const hashle = (t) => crypto.createHash("sha256").update(String(t)).digest("hex");
+const YEREL_ADRESLER = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+
+// Hem Express isteği hem de WebSocket (ham http) isteği için çalışır.
+function cihazTokeniAl(req) {
+  const baslik = req.headers["x-cihaz-anahtari"];
+  if (baslik) return String(baslik);
+  try {
+    return new URL(req.url, "http://x").searchParams.get("k") || "";
+  } catch (e) {
+    return "";
+  }
+}
+function cihazHashiAl(req) {
+  const t = cihazTokeniAl(req);
+  return t ? hashle(t) : "";
+}
+function yetkiliMi(req) {
+  if (!tuneldenGelenIstek(req) && YEREL_ADRESLER.has(req.socket.remoteAddress)) return true;
+  const h = cihazHashiAl(req);
+  return !!h && db.cihazlariOku().some((c) => c.hash === h);
+}
+function yetkiGerekli(req, res, next) {
+  if (yetkiliMi(req)) return next();
+  return res.status(401).json({ hata: "Bu cihaz eşleştirilmemiş.", eslestirmeGerekli: true });
+}
+
+let aktifKod = null; // { kod, bitis, hata }
+const KOD_SURESI_MS = 5 * 60 * 1000;
+const KOD_EN_FAZLA_HATA = 5;
+
+app.post("/api/eslestirme-kodu", yetkiGerekli, (req, res) => {
+  const kod = String(crypto.randomInt(0, 1000000)).padStart(6, "0");
+  aktifKod = { kod, bitis: Date.now() + KOD_SURESI_MS, hata: 0 };
+  res.json({ kod, saniye: KOD_SURESI_MS / 1000 });
+});
+
+app.post("/api/eslestir", (req, res) => {
+  const { kod, ad } = req.body || {};
+  if (!aktifKod || Date.now() > aktifKod.bitis) {
+    aktifKod = null;
+    return res.status(400).json({ hata: "Eşleştirme kodu yok ya da süresi dolmuş. Ana bilgisayardan yeni kod üret." });
+  }
+  const gelen = Buffer.from(String(kod || "").trim());
+  const beklenen = Buffer.from(aktifKod.kod);
+  if (gelen.length !== beklenen.length || !crypto.timingSafeEqual(gelen, beklenen)) {
+    aktifKod.hata += 1;
+    if (aktifKod.hata >= KOD_EN_FAZLA_HATA) aktifKod = null; // kaba kuvvet denemesine karşı kodu yak
+    return res.status(401).json({ hata: "Kod hatalı." });
+  }
+  aktifKod = null; // kod tek kullanımlık
+  const anahtar = crypto.randomBytes(32).toString("base64url");
+  const liste = db.cihazlariOku();
+  liste.push({ id: yeniId("c"), ad: String(ad || "Cihaz").slice(0, 40), hash: hashle(anahtar), tarih: Date.now() });
+  db.cihazlariYaz(liste);
+  res.json({ anahtar });
+});
+
+app.get("/api/cihazlar", yetkiGerekli, (req, res) => {
+  res.json(db.cihazlariOku().map(({ id, ad, tarih }) => ({ id, ad, tarih })));
+});
+
+app.delete("/api/cihazlar/:id", yetkiGerekli, (req, res) => {
+  const liste = db.cihazlariOku();
+  const hedef = liste.find((c) => c.id === req.params.id);
+  if (!hedef) return res.status(404).json({ hata: "Cihaz bulunamadı." });
+  db.cihazlariYaz(liste.filter((c) => c.id !== hedef.id));
+  // Kaldırılan cihazın açık canlı bağlantısını da hemen kes.
+  wss.clients.forEach((ws) => ws.cihazHash === hedef.hash && ws.terminate());
+  res.json({ tamam: true });
 });
 
 // ---------------------------------------------------------------------------

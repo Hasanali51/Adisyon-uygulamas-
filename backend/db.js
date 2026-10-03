@@ -112,4 +112,22 @@ function yaz(durum) {
   return yazmaKuyrugu;
 }
 
-module.exports = { oku, yaz, varsayilanDurum };
+// Eşleştirilmiş cihazlar (tablet/telefon) AYRI bir dosyada tutulur: durum.json'ı
+// ekranlar komple üzerine yazdığı için cihaz anahtarları orada güvende olmaz.
+// Burada anahtarların kendisi değil sadece SHA-256 özetleri (hash) saklanır.
+const CIHAZ_DOSYA = path.join(TABAN_DIZIN, "cihazlar.json");
+
+function cihazlariOku() {
+  try {
+    const v = JSON.parse(fs.readFileSync(CIHAZ_DOSYA, "utf8"));
+    return Array.isArray(v) ? v : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function cihazlariYaz(liste) {
+  fs.writeFileSync(CIHAZ_DOSYA, JSON.stringify(liste, null, 2));
+}
+
+module.exports = { oku, yaz, varsayilanDurum, cihazlariOku, cihazlariYaz };

@@ -1,7 +1,6 @@
 # Akşam yapılacaklar (bilgisayarda) → sonra ilk mekanda test
 
-Kod tarafı hazır ve git'te (sürüm **1.3.1**). `v1.3.0` etiketini kullanma, 1.3.1 sonrasında
-lisans ve webhook güvenliği düzeltmeleri geldi.
+Kod tarafı hazır ve git'te (sürüm **1.3.2**). `v1.3.0` ve `v1.3.1` etiketlerini kullanma; 1.3.2'de lisans, webhook ve cihaz eşleştirme güvenliği tamamlandı.
 
 ## 1) Hazırlık (5 dk)
 1. Projeyi güncelle: `git pull` (ya da repoyu yeniden indir).
@@ -12,9 +11,9 @@ lisans ve webhook güvenliği düzeltmeleri geldi.
 
 ## 2) Kurulum dosyasını derle ve yayınla (15 dk)
 1. `cd masaustu` → `npm install` → `npm run derle-win`
-2. Çıkan klasörden (`masaustu/dist/`) şu 3 dosyayı al: `Adisyo-Setup-1.3.1.exe`,
-   `Adisyo-Setup-1.3.1.exe.blockmap`, `latest.yml`
-3. GitHub → Releases → **Draft a new release** → etiket olarak **`v1.3.1`** yaz (Create new tag) →
+2. Çıkan klasörden (`masaustu/dist/`) şu 3 dosyayı al: `Adisyo-Setup-1.3.2.exe`,
+   `Adisyo-Setup-1.3.2.exe.blockmap`, `latest.yml`
+3. GitHub → Releases → **Draft a new release** → etiket olarak **`v1.3.2`** yaz (Create new tag) →
    3 dosyayı sürükle → **Publish release**.
    (Release "pre-release" ya da "draft" kalmasın, yoksa otomatik güncelleme görmez.)
 
@@ -37,9 +36,15 @@ daha önce **etkinleştirilmiş** kurulumlar etkilenmez.
       (yenile düğmesi) ve kaydet. Anahtar yoksa webhook'lar artık reddedilir (güvenlik için bilerek böyle).
 - [ ] **QR Menü:** Entegrasyonlar → QR Menü → yazdır, telefondan okut, menü açılıyor mu
 - [ ] **Otomatik güncelleme:** kurulu sürümün altında yeni bir sürüm yayınlayıp uygulamanın bulup kurduğunu gör
-- [ ] Telefon/tablet (aynı WiFi) bağlantısı
+- [ ] Telefon/tablet: eşleştirme kodu ile bağlanıyor mu; **eşleşmemiş bir telefondan** `http://<ip>:4000/api/durum` açılmıyor mu (401 görmeli)
 
-## Bilinen risk (sonraya)
-Aynı WiFi ağındaki herkes (müşteriler dahil, misafir WiFi ayrı değilse) `http://<ip>:4000/api/durum` adresini
-açabilir. Bu yüzden **kafe WiFi'sini personel ve müşteri diye ayırmanı** (misafir ağı) öneririm. Kalıcı çözüm,
-API'ye PIN tabanlı oturum doğrulaması eklemek (ayrı bir iş).
+## Cihaz eşleştirme (yeni, güvenlik)
+Artık aynı WiFi'deki **müşteriler** `/api/durum` ve canlı yayına giremez; sadece ana bilgisayar (localhost) ve
+eşleştirilmiş cihazlar girebilir. Müşteriler yalnızca `/menu` (QR menü) sayfasını görür.
+- **Ana bilgisayarda** (Adisyo penceresi ya da `http://localhost:4000`): ekstra bir şey yapma.
+- **Tablet/telefon/ikinci kasa:** adresi aç (`http://192.168.x.x:4000`) → "Cihazı Eşleştir" ekranı çıkar →
+  ana bilgisayarda Yönetici → Entegrasyonlar → **Cihaz Ekle** → kod üret → cihaza gir. Bir kez yapılır.
+- Cihaz kaybolursa aynı yerden **Kaldır**.
+- Ana bilgisayarda tarayıcıyı `192.168...` adresiyle değil, **`localhost`** adresiyle aç (yoksa eşleştirme ister).
+- Android uygulaması aynı sayfayı açtığı için ilk açılışta o da kod ister.
+- Güncelleme sonrası mevcut tabletler bir kez eşleştirme isteyecek.
