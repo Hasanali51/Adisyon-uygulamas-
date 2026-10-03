@@ -551,6 +551,7 @@ function fisEscposOlustur(kayit, fisAyarlari, isletme) {
   boyutAyarla(fisAyarlari.altYaziBoyutu);
   ekle(ESC, 0x61, 0x01);
   satir("Afiyet olsun!");
+  if (fisAyarlari.maliDegeriYoktur !== false) satir("BILGI FISIDIR - MALI DEGERI YOKTUR");
   boyutAyarla(0);
   ekle(ESC, 0x45, 0x00);
 
@@ -1671,6 +1672,7 @@ export default function AdisyoUygulamasi() {
     altYaziBoyutu: 10,
     kalinYazi: false,
     kdvGoster: false,
+    maliDegeriYoktur: true,
     siparisNoGoster: false,
     seciliYazici: "",
     mutfakYazicisi: "",
@@ -2379,6 +2381,9 @@ export default function AdisyoUygulamasi() {
             <div style={{ fontSize: fisAyarlari.altYaziBoyutu, marginTop: 4 }}>KDV Fiyatlara Dahildir</div>
           )}
           <div style={{ textAlign: "center", fontSize: fisAyarlari.altYaziBoyutu, marginTop: 10 }}>Afiyet olsun!</div>
+          {fisAyarlari.maliDegeriYoktur !== false && (
+            <div style={{ textAlign: "center", fontSize: fisAyarlari.altYaziBoyutu, marginTop: 4 }}>Bilgi fişidir · Mali değeri yoktur</div>
+          )}
         </div>
       )}
 
@@ -2994,6 +2999,14 @@ export default function AdisyoUygulamasi() {
                   Fiş yazısı kalın (bold) olsun
                 </label>
                 <label className="flex items-center justify-between text-sm">
+                  <span>Fişin altına "Bilgi fişidir · Mali değeri yoktur" yaz</span>
+                  <input
+                    type="checkbox"
+                    checked={fisAyarlari.maliDegeriYoktur !== false}
+                    onChange={(e) => fisAyarlariGuncelle({ maliDegeriYoktur: e.target.checked })}
+                  />
+                </label>
+                <label className="flex items-center justify-between text-sm">
                   <span>KDV Bilgisi Gösterilsin</span>
                   <input
                     type="checkbox"
@@ -3111,6 +3124,9 @@ export default function AdisyoUygulamasi() {
                       <div style={{ fontSize: fisAyarlari.altYaziBoyutu, marginTop: 4 }}>KDV Fiyatlara Dahildir</div>
                     )}
                     <div style={{ textAlign: "center", fontSize: fisAyarlari.altYaziBoyutu, marginTop: 10 }}>Afiyet olsun!</div>
+          {fisAyarlari.maliDegeriYoktur !== false && (
+            <div style={{ textAlign: "center", fontSize: fisAyarlari.altYaziBoyutu, marginTop: 4 }}>Bilgi fişidir · Mali değeri yoktur</div>
+          )}
                   </div>
                 </div>
                 <div className="text-[11px] opacity-50 text-center mt-3">
@@ -3134,6 +3150,12 @@ export default function AdisyoUygulamasi() {
                 80mm/58mm fiş yazıcısı sistemde kurulu bir yazıcı olarak tanımlıysa (çoğu USB fiş yazıcısında durum budur)
                 sorunsuz çalışır. Yazıcıyı fiziksel olarak bilgisayarına/kasa cihazına bağlayıp önce işletim sisteminden
                 (Windows/Mac) tanıtman gerekiyor; bu uygulama o kurulu yazıcıyı kullanır, ayrıca bir sürücü kurulumu yapmaz.
+              </div>
+
+              <div style={{ background: MOSS_BG, color: MOSS }} className="rounded-lg p-4 text-xs leading-relaxed">
+                <b>Yasal bilgi:</b> Adisyo bir adisyon / sipariş takip programıdır. Bastığı fiş <b>bilgi fişidir</b>; yasal belge
+                (yeni nesil ÖKC fişi ya da e-Arşiv/e-Fatura) yerine geçmez. Müşteriye yasal belge vermen gerekiyorsa
+                mevcut ÖKC (yazar kasa) cihazını kullanmaya devam et. Fişteki "Mali değeri yoktur" yazısı bu yüzden varsayılan olarak açıktır.
               </div>
             </div>
           )}

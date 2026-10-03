@@ -69,6 +69,7 @@ const varsayilanDurum = () => ({
     altYaziBoyutu: 10,
     kalinYazi: false,
     kdvGoster: false,
+    maliDegeriYoktur: true,
     siparisNoGoster: false,
     seciliYazici: "",
     mutfakYazicisi: "",

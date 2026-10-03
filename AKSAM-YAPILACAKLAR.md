@@ -1,6 +1,6 @@
 # Akşam yapılacaklar (bilgisayarda) → sonra ilk mekanda test
 
-Kod tarafı hazır ve git'te (sürüm **1.4.1**). `v1.3.0`, `v1.3.1`, `v1.3.2` ve `v1.4.0` etiketlerini kullanma; 1.4.1'de lisans, webhook, cihaz eşleştirme güvenliği ve otomatik yedekleme ve PDF rapor var.
+Kod tarafı hazır ve git'te (sürüm **1.4.2**). `v1.3.0`, `v1.3.1`, `v1.3.2`, `v1.4.0` ve `v1.4.1` etiketlerini kullanma; 1.4.2'de lisans, webhook, cihaz eşleştirme güvenliği ve otomatik yedekleme ve PDF rapor var.
 
 ## 1) Hazırlık (5 dk)
 1. Projeyi güncelle: `git pull` (ya da repoyu yeniden indir).
@@ -11,9 +11,9 @@ Kod tarafı hazır ve git'te (sürüm **1.4.1**). `v1.3.0`, `v1.3.1`, `v1.3.2` v
 
 ## 2) Kurulum dosyasını derle ve yayınla (15 dk)
 1. `cd masaustu` → `npm install` → `npm run derle-win`
-2. Çıkan klasörden (`masaustu/dist/`) şu 3 dosyayı al: `Adisyo-Setup-1.4.1.exe`,
-   `Adisyo-Setup-1.4.1.exe.blockmap`, `latest.yml`
-3. GitHub → Releases → **Draft a new release** → etiket olarak **`v1.4.1`** yaz (Create new tag) →
+2. Çıkan klasörden (`masaustu/dist/`) şu 3 dosyayı al: `Adisyo-Setup-1.4.2.exe`,
+   `Adisyo-Setup-1.4.2.exe.blockmap`, `latest.yml`
+3. GitHub → Releases → **Draft a new release** → etiket olarak **`v1.4.2`** yaz (Create new tag) →
    3 dosyayı sürükle → **Publish release**.
    (Release "pre-release" ya da "draft" kalmasın, yoksa otomatik güncelleme görmez.)
 
@@ -30,6 +30,7 @@ daha önce **etkinleştirilmiş** kurulumlar etkilenmez.
 ## 4) İlk mekanda test listesi
 - [ ] Kurulum → lisans ekranı → işletme adı + anahtar → açılıyor mu
 - [ ] **Fiş yazıcısı:** ham yazdırma + otomatik kağıt kesme (yol haritasının 1. maddesi, hâlâ donanımda doğrulanmadı)
+- [ ] **Fişin altında** "BILGI FISIDIR - MALI DEGERI YOKTUR" satırı çıkıyor mu (yazıcıda yanlış karakter/kesilme var mı); yasal belge için müşterinin kendi ÖKC'si kullanılıyor
 - [ ] **Mutfak yazıcısı (KOT):** fiyatsız fiş mutfak yazıcısından çıkıyor mu
 - [ ] Masa taşıma/birleştirme, stok düşme ve "Tükendi", veresiye/cari, Excel/CSV rapor, **PDF / Yazdır** (Ciro & Rapor → "PDF / Yazdır" → yazıcı olarak "PDF olarak kaydet" / "Microsoft Print to PDF" seç)
 - [ ] **Entegrasyonlar:** Tünel (ngrok) bilgilerini gir; her platform için **Webhook Doğrulama Anahtarı oluştur**
@@ -49,3 +50,7 @@ eşleştirilmiş cihazlar girebilir. Müşteriler yalnızca `/menu` (QR menü) s
 - Ana bilgisayarda tarayıcıyı `192.168...` adresiyle değil, **`localhost`** adresiyle aç (yoksa eşleştirme ister).
 - Android uygulaması aynı sayfayı açtığı için ilk açılışta o da kod ister.
 - Güncelleme sonrası mevcut tabletler bir kez eşleştirme isteyecek.
+
+## Kararlar (bu oturumda)
+- **Marka adı:** şimdilik "Adisyo" kalıyor; satışa/Play Store'a çıkmadan önce karar verilecek (hukuki risk notu duruyor).
+- **Yasal fiş:** bilgi fişi + müşterinin kendi ÖKC'si. Uygulamada fişe "mali değeri yoktur" yazısı ve ayarlarda yasal bilgi kutusu eklendi, README'de not var.

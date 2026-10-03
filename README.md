@@ -197,3 +197,13 @@ adisyo-sistemi/
   kaynak) kurup frontend'e birkaç satır entegrasyon eklenebilir.
 - Kimlik doğrulama (giriş ekranı) yok; birden fazla şube/kullanıcı ayrımı
   gerekiyorsa eklenebilir.
+
+
+---
+
+## Yasal not (fiş)
+
+Adisyo bir **adisyon / sipariş takip** programıdır. Bastığı fiş **bilgi fişidir**, yasal belge
+(yeni nesil ödeme kaydedici cihaz fişi ya da e-Arşiv/e-Fatura) yerine geçmez. İşletmeler yasal belge
+düzenlemek için mevcut ÖKC (yazar kasa) cihazlarını kullanmaya devam etmelidir. Fişlerin altına
+varsayılan olarak "Bilgi fişidir · Mali değeri yoktur" yazılır (Yönetici → Yazıcı & İşletme'den kapatılabilir).
