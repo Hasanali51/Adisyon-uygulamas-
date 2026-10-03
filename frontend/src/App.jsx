@@ -645,7 +645,7 @@ function LisansEkrani({ onDogrula }) {
             value={anahtar}
             onChange={(e) => setAnahtar(e.target.value)}
             className="border rounded px-3 py-2 text-sm w-full outline-none font-mono tracking-wide"
-            placeholder="XXXX-XXXX-XXXX-XXXX"
+            placeholder="Size verilen lisans anahtarını yapıştırın"
           />
         </div>
         {hata && <div className="text-sm text-red-600">{hata}</div>}

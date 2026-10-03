@@ -16,26 +16,32 @@ const crypto = require("crypto");
 const { WebSocketServer } = require("ws");
 const db = require("./db");
 
-// ---- Lisans anahtarı doğrulama ----
-// ÖNEMLİ (dürüstçe söylemek gerekirse): Bu uygulama asar olmadan (düz dosyalar
-// halinde) paketleniyor, yani teknik bilgisi olan biri bu dosyayı açıp bu
-// gizli anahtarı görebilir. Bu yüzden bu sistem "kırılamaz" bir DRM değil,
-// sıradan bir kullanıcının kurulum dosyasını başka birine gönderip bedavaya
-// kullandırmasını ENGELLEYEN bir hız kesici (speed bump). Ciddi bir korsanlık
-// girişimini durduramaz ama günlük "arkadaşıma da göndereyim" kullanımını
-// engeller. Gerçek DRM için ileride bir lisans sunucusu (internet üzerinden
-// doğrulama) gerekir.
-//
-// BU DEĞERİ DEĞİŞTİR: kendi projen için benzersiz, kimsenin tahmin edemeyeceği
-// bir metin yaz (örn. rastgele 40 karakterlik bir dize). Bu değeri kimseyle
-// paylaşma; lisans-uret.js dosyasında da AYNI değeri kullanman gerekiyor.
-const LISANS_GIZLI_ANAHTAR = "ADISYO-DEGISTIR-BU-DEGERI-KENDI-GIZLI-KODUNLA-2026";
+// ---- Lisans anahtarı doğrulama (imzalı, ed25519) ----
+// Lisans anahtarları SENİN bilgisayarındaki ÖZEL anahtarla imzalanır
+// (bkz. lisans-uret.js, repoda yoktur). Uygulamanın içinde yalnızca GENEL
+// anahtar bulunur: onunla bir anahtarın gerçekten senin imzanı taşıyıp
+// taşımadığı doğrulanabilir ama yeni anahtar ÜRETİLEMEZ. Böylece kod herkese
+// açık olsa bile kimse kendine lisans üretemez.
+// (Dürüst not: uygulama kodu müşterinin bilgisayarında durduğundan, kararlı biri
+// kontrolü atlayacak şekilde kodu değiştirebilir; bu sistem anahtarı başkasına
+// "göndermeyi" ve sahte anahtar üretmeyi engeller, tam DRM değildir.)
+const LISANS_GENEL_ANAHTAR = `-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEA40w+X734542Im/W1kaGneq+2emG5FgIb7cZLLlaUamY=
+-----END PUBLIC KEY-----`;
 
-function lisansAnahtariUret(isletmeAdi) {
-  const normal = String(isletmeAdi || "").trim().toLocaleUpperCase("tr-TR");
-  const hmac = crypto.createHmac("sha256", LISANS_GIZLI_ANAHTAR).update(normal).digest("hex").toUpperCase();
-  const kisa = hmac.slice(0, 16);
-  return kisa.match(/.{1,4}/g).join("-");
+const lisansAdiNormal = (s) => String(s || "").trim().toLocaleUpperCase("tr-TR");
+
+function lisansGecerliMi(isletmeAdi, anahtar) {
+  try {
+    const [yuk64, imza64] = String(anahtar || "").trim().split(".");
+    if (!yuk64 || !imza64) return false;
+    const yuk = Buffer.from(yuk64, "base64url");
+    if (!crypto.verify(null, yuk, LISANS_GENEL_ANAHTAR, Buffer.from(imza64, "base64url"))) return false;
+    const { i } = JSON.parse(yuk.toString("utf8"));
+    return i === lisansAdiNormal(isletmeAdi);
+  } catch {
+    return false;
+  }
 }
 
 const app = express();
@@ -113,9 +119,7 @@ app.get("/health", (req, res) => res.json({ durum: "ayakta" }));
 app.post("/api/lisans-dogrula", (req, res) => {
   const { isletmeAdi, anahtar } = req.body || {};
   if (!isletmeAdi || !anahtar) return res.json({ gecerli: false });
-  const beklenen = lisansAnahtariUret(isletmeAdi);
-  const girilen = String(anahtar).trim().toUpperCase();
-  res.json({ gecerli: beklenen === girilen });
+  res.json({ gecerli: lisansGecerliMi(isletmeAdi, anahtar) });
 });
 
 // Uygulamanın (frontend) tüm state'i okuduğu/yazdığı uç noktalar.
@@ -161,8 +165,13 @@ function webhookDogrula(req, platform, durum) {
   // Girilmemişse eski yöntem olarak .env dosyasındaki değişkene bakılır.
   const ayar = durum.entegrasyonlar && durum.entegrasyonlar[platform];
   const beklenen = (ayar && ayar.webhookAnahtari) || process.env[`WEBHOOK_SECRET_${platform.toUpperCase()}`];
-  if (!beklenen) return true; // hiçbir yerde tanımlı değilse kontrolü atla (sadece geliştirme için!)
-  return req.header("x-webhook-secret") === beklenen;
+  // Anahtar tanımlı DEĞİLSE istek reddedilir: webhook adresi internete açık olduğundan,
+  // anahtarsız kabul etmek herkesin sahte sipariş göndermesine izin vermek olurdu.
+  if (!beklenen) return false;
+  const gelen = String(req.header("x-webhook-secret") || "");
+  const a = Buffer.from(gelen);
+  const b = Buffer.from(String(beklenen));
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
 // Beklenen genel (normalize edilmiş) gövde örneği:
