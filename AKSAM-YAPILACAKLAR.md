@@ -1,6 +1,6 @@
 # Akşam yapılacaklar (bilgisayarda) → sonra ilk mekanda test
 
-Kod tarafı hazır ve git'te (sürüm **1.4.0**). `v1.3.0`, `v1.3.1` ve `v1.3.2` etiketlerini kullanma; 1.4.0'de lisans, webhook, cihaz eşleştirme güvenliği ve otomatik yedekleme var.
+Kod tarafı hazır ve git'te (sürüm **1.4.1**). `v1.3.0`, `v1.3.1`, `v1.3.2` ve `v1.4.0` etiketlerini kullanma; 1.4.1'de lisans, webhook, cihaz eşleştirme güvenliği ve otomatik yedekleme ve PDF rapor var.
 
 ## 1) Hazırlık (5 dk)
 1. Projeyi güncelle: `git pull` (ya da repoyu yeniden indir).
@@ -11,9 +11,9 @@ Kod tarafı hazır ve git'te (sürüm **1.4.0**). `v1.3.0`, `v1.3.1` ve `v1.3.2`
 
 ## 2) Kurulum dosyasını derle ve yayınla (15 dk)
 1. `cd masaustu` → `npm install` → `npm run derle-win`
-2. Çıkan klasörden (`masaustu/dist/`) şu 3 dosyayı al: `Adisyo-Setup-1.4.0.exe`,
-   `Adisyo-Setup-1.4.0.exe.blockmap`, `latest.yml`
-3. GitHub → Releases → **Draft a new release** → etiket olarak **`v1.4.0`** yaz (Create new tag) →
+2. Çıkan klasörden (`masaustu/dist/`) şu 3 dosyayı al: `Adisyo-Setup-1.4.1.exe`,
+   `Adisyo-Setup-1.4.1.exe.blockmap`, `latest.yml`
+3. GitHub → Releases → **Draft a new release** → etiket olarak **`v1.4.1`** yaz (Create new tag) →
    3 dosyayı sürükle → **Publish release**.
    (Release "pre-release" ya da "draft" kalmasın, yoksa otomatik güncelleme görmez.)
 
@@ -31,7 +31,7 @@ daha önce **etkinleştirilmiş** kurulumlar etkilenmez.
 - [ ] Kurulum → lisans ekranı → işletme adı + anahtar → açılıyor mu
 - [ ] **Fiş yazıcısı:** ham yazdırma + otomatik kağıt kesme (yol haritasının 1. maddesi, hâlâ donanımda doğrulanmadı)
 - [ ] **Mutfak yazıcısı (KOT):** fiyatsız fiş mutfak yazıcısından çıkıyor mu
-- [ ] Masa taşıma/birleştirme, stok düşme ve "Tükendi", veresiye/cari, Excel/CSV rapor
+- [ ] Masa taşıma/birleştirme, stok düşme ve "Tükendi", veresiye/cari, Excel/CSV rapor, **PDF / Yazdır** (Ciro & Rapor → "PDF / Yazdır" → yazıcı olarak "PDF olarak kaydet" / "Microsoft Print to PDF" seç)
 - [ ] **Entegrasyonlar:** Tünel (ngrok) bilgilerini gir; her platform için **Webhook Doğrulama Anahtarı oluştur**
       (yenile düğmesi) ve kaydet. Anahtar yoksa webhook'lar artık reddedilir (güvenlik için bilerek böyle).
 - [ ] **QR Menü:** Entegrasyonlar → QR Menü → yazdır, telefondan okut, menü açılıyor mu

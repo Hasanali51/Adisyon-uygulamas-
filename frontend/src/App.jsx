@@ -1806,6 +1806,77 @@ export default function AdisyoUygulamasi() {
     return Object.values(harita).sort((a, b) => b.adet - a.adet);
   })();
 
+  // Raporu PDF olarak kaydetmek/yazdırmak için temiz bir sayfa açar. Gizli iframe + yazdır
+  // penceresi: açılan pencerede yazıcı olarak "PDF olarak kaydet" (Windows'ta
+  // "Microsoft Print to PDF") seçilirse PDF dosyası olur. Yazı tipi tarayıcıdan geldiği için
+  // Türkçe karakterler (ğ, ş, ı, İ) sorunsuz çıkar.
+  const raporPdfYazdir = () => {
+    const kacis = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const donem =
+      raporFiltre === "bugun"
+        ? `Bugün (${new Date().toLocaleDateString("tr-TR")})`
+        : raporFiltre === "hafta"
+        ? "Son 7 gün"
+        : raporFiltre === "gun"
+        ? new Date(secilenGunZamani).toLocaleDateString("tr-TR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })
+        : "Tüm zamanlar";
+    const isletmeAdi = durum.isletme?.ad || durum.lisans?.isletmeAdi || "";
+    const ozet = [
+      ["Toplam Ciro", raporToplam],
+      ["Nakit", raporNakit],
+      ["Kart", raporKart],
+      ["Paket", raporPaket],
+      ["Veresiye", raporVeresiye],
+    ]
+      .map(([ad, t]) => `<div class="kutu"><div class="e">${ad}</div><div class="d">${kacis(paraFormat(t))}</div></div>`)
+      .join("");
+    const urunSatirlari = urunBazliSatis
+      .map((u) => `<tr><td>${kacis(u.ad)}</td><td class="s">${u.adet}</td><td class="s">${kacis(paraFormat(u.ciro))}</td></tr>`)
+      .join("");
+    const hesapSatirlari = [...filtreliGecmis]
+      .sort((a, b) => a.kapanisZamani - b.kapanisZamani)
+      .map((k) => {
+        const t = new Date(k.kapanisZamani);
+        const urunler = (k.urunler || []).map((u) => `${u.adet}x ${u.ad}`).join(", ");
+        return `<tr><td>${kacis(t.toLocaleDateString("tr-TR"))} ${kacis(t.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }))}</td><td>${kacis(k.masaAdi)}</td><td>${kacis(urunler)}</td><td>${kacis(k.yontem)}</td><td class="s">${kacis(paraFormat(k.toplam))}</td></tr>`;
+      })
+      .join("");
+
+    const f = document.createElement("iframe");
+    f.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;";
+    document.body.appendChild(f);
+    const d = f.contentWindow.document;
+    d.open();
+    d.write(`<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>Adisyo Rapor</title>
+      <style>
+        @page { size: A4; margin: 14mm; }
+        body { font-family: Arial, Helvetica, sans-serif; color: #1E293B; font-size: 12px; margin: 0; }
+        h1 { font-size: 20px; margin: 0 0 2px; } h2 { font-size: 14px; margin: 22px 0 6px; }
+        .alt { color: #64748B; margin-bottom: 14px; }
+        .ozet { display: flex; gap: 8px; } .kutu { flex: 1; border: 1px solid #CBD5E1; border-radius: 6px; padding: 8px 10px; }
+        .e { font-size: 10px; color: #64748B; } .d { font-size: 15px; font-weight: bold; margin-top: 2px; }
+        table { width: 100%; border-collapse: collapse; } th { text-align: left; background: #EAF1FB; font-size: 11px; }
+        th, td { padding: 5px 6px; border-bottom: 1px solid #E2E8F0; vertical-align: top; } .s { text-align: right; white-space: nowrap; }
+        tr { page-break-inside: avoid; } thead { display: table-header-group; }
+        .not { margin-top: 18px; font-size: 10px; color: #64748B; }
+      </style></head><body>
+      <h1>${kacis(isletmeAdi)} — Satış Raporu</h1>
+      <div class="alt">${kacis(donem)} · ${filtreliGecmis.length} hesap · Oluşturma: ${kacis(new Date().toLocaleString("tr-TR"))}</div>
+      <div class="ozet">${ozet}</div>
+      <h2>Ürün bazlı satışlar</h2>
+      <table><thead><tr><th>Ürün</th><th class="s">Adet</th><th class="s">Ciro</th></tr></thead><tbody>${urunSatirlari || '<tr><td colspan="3">Seçili aralıkta satış yok.</td></tr>'}</tbody></table>
+      <h2>Hesaplar</h2>
+      <table><thead><tr><th>Tarih</th><th>Masa / Kaynak</th><th>Ürünler</th><th>Ödeme</th><th class="s">Tutar</th></tr></thead><tbody>${hesapSatirlari || '<tr><td colspan="5">Seçili aralıkta hesap yok.</td></tr>'}</tbody></table>
+      <div class="not">Bu rapor bilgi amaçlıdır; resmi belge (fatura/fiş) yerine geçmez.</div>
+      </body></html>`);
+    d.close();
+    setTimeout(() => {
+      f.contentWindow.focus();
+      f.contentWindow.print();
+      setTimeout(() => f.remove(), 2000);
+    }, 300);
+  };
+
   const fisYazdir = (kayit) => setYazdirilacakFis(kayit);
 
   // ---- Paket siparişler (Trendyol Yemek / Getir Yemek / Yemeksepeti / Telefon) ----
@@ -3142,6 +3213,13 @@ export default function AdisyoUygulamasi() {
               className="border rounded-lg px-4 py-2.5 text-sm font-medium opacity-80 hover:opacity-100 whitespace-nowrap"
             >
               Excel'e Aktar (CSV)
+            </button>
+            <button
+              onClick={raporPdfYazdir}
+              style={{ borderColor: LINE }}
+              className="border rounded-lg px-4 py-2.5 text-sm font-medium opacity-80 hover:opacity-100 whitespace-nowrap"
+            >
+              PDF / Yazdır
             </button>
           </div>
 
