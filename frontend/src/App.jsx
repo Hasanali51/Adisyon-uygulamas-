@@ -780,6 +780,118 @@ function CihazlarKarti() {
   );
 }
 
+// Otomatik yedekleme durumu ve ayarı (asıl iş sunucuda yapılır: backend/yedek.js).
+function YedekKarti() {
+  const [bilgi, setBilgi] = useState(null);
+  const [ekKlasor, setEkKlasor] = useState("");
+  const [mesaj, setMesaj] = useState({ tip: "", metin: "" });
+  const [bekle, setBekle] = useState(false);
+
+  const yukle = useCallback(async () => {
+    try {
+      const res = await apiFetch(`${API_BASE}/api/yedek`);
+      if (!res.ok) return;
+      const v = await res.json();
+      setBilgi(v);
+      setEkKlasor((onceki) => onceki || v.ekKlasor || "");
+    } catch (e) {
+      /* yok say */
+    }
+  }, []);
+  useEffect(() => {
+    yukle();
+  }, [yukle]);
+
+  const simdiYedekle = async () => {
+    setBekle(true);
+    setMesaj({ tip: "", metin: "" });
+    try {
+      const res = await apiFetch(`${API_BASE}/api/yedek`, { method: "POST" });
+      const v = await res.json().catch(() => ({}));
+      if (v.durum) setBilgi(v.durum);
+      setMesaj(res.ok ? { tip: "ok", metin: "Yedek alındı." } : { tip: "hata", metin: v.hata || "Yedek alınamadı." });
+    } catch (e) {
+      setMesaj({ tip: "hata", metin: "Sunucuya ulaşılamadı." });
+    } finally {
+      setBekle(false);
+    }
+  };
+
+  const ekKlasorKaydet = async () => {
+    setBekle(true);
+    setMesaj({ tip: "", metin: "" });
+    try {
+      const res = await apiFetch(`${API_BASE}/api/yedek/ayar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ekKlasor }),
+      });
+      const v = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMesaj({ tip: "hata", metin: v.hata || "Klasör kaydedilemedi." });
+      } else {
+        setBilgi(v);
+        setMesaj({ tip: "ok", metin: v.ekKlasor ? "Ek klasör kaydedildi. Sonraki yedekten itibaren oraya da yazılır." : "Ek klasör kapatıldı." });
+      }
+    } catch (e) {
+      setMesaj({ tip: "hata", metin: "Sunucuya ulaşılamadı." });
+    } finally {
+      setBekle(false);
+    }
+  };
+
+  const zaman = (ms) => (ms ? new Date(ms).toLocaleString("tr-TR") : "henüz yok");
+
+  return (
+    <div style={{ background: CARD, borderColor: LINE }} className="rounded-lg border p-4 flex flex-col gap-3">
+      <div className="text-sm font-medium">Otomatik Yedekleme</div>
+      <div className="text-xs opacity-60 -mt-2 leading-relaxed">
+        Veriler her saat (değiştiyse) otomatik yedeklenir: son 48 saat + son 30 gün saklanır. Bilgisayar bozulursa
+        bile verini kaybetmemek için aşağıya <b>ek bir klasör</b> (OneDrive/Google Drive klasörü ya da USB bellek)
+        yazmanı öneririm; yedekler oraya da kopyalanır.
+      </div>
+      {bilgi && (
+        <div style={{ background: PAPER, borderColor: LINE }} className="rounded border p-3 text-xs leading-relaxed">
+          <div>Son yedek: <b>{zaman(bilgi.sonBasari)}</b></div>
+          <div>Klasördeki yedek sayısı: <b>{bilgi.adet}</b></div>
+          <div className="break-all opacity-60">Klasör: {bilgi.klasor}</div>
+          {bilgi.sonHata && <div style={{ color: RUST }} className="mt-1">Uyarı: {bilgi.sonHata}</div>}
+        </div>
+      )}
+      <button
+        onClick={simdiYedekle}
+        disabled={bekle}
+        style={{ background: WINE }}
+        className="text-white text-sm font-medium rounded-lg py-2.5 disabled:opacity-60"
+      >
+        Şimdi Yedekle
+      </button>
+      <div>
+        <label className="text-xs opacity-60 mb-1 block">Ek yedek klasörü (isteğe bağlı, tam yol)</label>
+        <div className="flex gap-2">
+          <input
+            value={ekKlasor}
+            onChange={(e) => setEkKlasor(e.target.value)}
+            placeholder="Örn: D:\Adisyo-Yedek  ya da  C:\Users\Ad\OneDrive\Adisyo"
+            style={{ borderColor: LINE }}
+            className="border rounded px-3 py-2 text-sm w-full outline-none"
+          />
+          <button onClick={ekKlasorKaydet} disabled={bekle} style={{ borderColor: LINE }} className="border rounded px-4 text-sm disabled:opacity-60">
+            Kaydet
+          </button>
+        </div>
+      </div>
+      {mesaj.metin && (
+        <div style={{ color: mesaj.tip === "hata" ? RUST : MOSS }} className="text-xs">{mesaj.metin}</div>
+      )}
+      <div className="text-[11px] opacity-50 leading-relaxed">
+        Geri yüklemek için: sol menü → <b>Yedekten Geri Yükle</b> → yukarıdaki klasörden bir yedek dosyası seç
+        (<code>gunluk-…</code> o günün son hali, <code>saatlik-…</code> o saatin hali).
+      </div>
+    </div>
+  );
+}
+
 function LisansEkrani({ onDogrula }) {
   const [isletmeAdi, setIsletmeAdi] = useState("");
   const [anahtar, setAnahtar] = useState("");
@@ -2943,6 +3055,8 @@ export default function AdisyoUygulamasi() {
                 </div>
                 <YoneticiPinDegistir mevcutPin={yoneticiPin} onKaydet={pinDegistir} />
               </div>
+
+              <YedekKarti />
 
               <div style={{ background: RUST_BG, color: RUST }} className="rounded-lg p-4 text-xs leading-relaxed">
                 Bu uygulama fişi, bilgisayarına bağlı yazıcı üzerinden tarayıcının yazdırma penceresiyle basar —

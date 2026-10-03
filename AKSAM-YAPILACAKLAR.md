@@ -1,6 +1,6 @@
 # Akşam yapılacaklar (bilgisayarda) → sonra ilk mekanda test
 
-Kod tarafı hazır ve git'te (sürüm **1.3.2**). `v1.3.0` ve `v1.3.1` etiketlerini kullanma; 1.3.2'de lisans, webhook ve cihaz eşleştirme güvenliği tamamlandı.
+Kod tarafı hazır ve git'te (sürüm **1.4.0**). `v1.3.0`, `v1.3.1` ve `v1.3.2` etiketlerini kullanma; 1.4.0'de lisans, webhook, cihaz eşleştirme güvenliği ve otomatik yedekleme var.
 
 ## 1) Hazırlık (5 dk)
 1. Projeyi güncelle: `git pull` (ya da repoyu yeniden indir).
@@ -11,9 +11,9 @@ Kod tarafı hazır ve git'te (sürüm **1.3.2**). `v1.3.0` ve `v1.3.1` etiketler
 
 ## 2) Kurulum dosyasını derle ve yayınla (15 dk)
 1. `cd masaustu` → `npm install` → `npm run derle-win`
-2. Çıkan klasörden (`masaustu/dist/`) şu 3 dosyayı al: `Adisyo-Setup-1.3.2.exe`,
-   `Adisyo-Setup-1.3.2.exe.blockmap`, `latest.yml`
-3. GitHub → Releases → **Draft a new release** → etiket olarak **`v1.3.2`** yaz (Create new tag) →
+2. Çıkan klasörden (`masaustu/dist/`) şu 3 dosyayı al: `Adisyo-Setup-1.4.0.exe`,
+   `Adisyo-Setup-1.4.0.exe.blockmap`, `latest.yml`
+3. GitHub → Releases → **Draft a new release** → etiket olarak **`v1.4.0`** yaz (Create new tag) →
    3 dosyayı sürükle → **Publish release**.
    (Release "pre-release" ya da "draft" kalmasın, yoksa otomatik güncelleme görmez.)
 
@@ -36,6 +36,7 @@ daha önce **etkinleştirilmiş** kurulumlar etkilenmez.
       (yenile düğmesi) ve kaydet. Anahtar yoksa webhook'lar artık reddedilir (güvenlik için bilerek böyle).
 - [ ] **QR Menü:** Entegrasyonlar → QR Menü → yazdır, telefondan okut, menü açılıyor mu
 - [ ] **Otomatik güncelleme:** kurulu sürümün altında yeni bir sürüm yayınlayıp uygulamanın bulup kurduğunu gör
+- [ ] **Otomatik yedek:** Yönetici → Yazıcı & İşletme → Otomatik Yedekleme: "Şimdi Yedekle" çalışıyor mu, **ek klasör** olarak OneDrive/USB yolunu gir, dosyalar oraya düşüyor mu; bir yedekle "Yedekten Geri Yükle" dene
 - [ ] Telefon/tablet: eşleştirme kodu ile bağlanıyor mu; **eşleşmemiş bir telefondan** `http://<ip>:4000/api/durum` açılmıyor mu (401 görmeli)
 
 ## Cihaz eşleştirme (yeni, güvenlik)

@@ -130,4 +130,4 @@ function cihazlariYaz(liste) {
   fs.writeFileSync(CIHAZ_DOSYA, JSON.stringify(liste, null, 2));
 }
 
-module.exports = { oku, yaz, varsayilanDurum, cihazlariOku, cihazlariYaz };
+module.exports = { oku, yaz, varsayilanDurum, cihazlariOku, cihazlariYaz, VERI_DIZINI: TABAN_DIZIN, DURUM_DOSYA: DOSYA };

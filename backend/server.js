@@ -15,6 +15,7 @@ const os = require("os");
 const crypto = require("crypto");
 const { WebSocketServer } = require("ws");
 const db = require("./db");
+const yedek = require("./yedek");
 
 // ---- Lisans anahtarı doğrulama (imzalı, ed25519) ----
 // Lisans anahtarları SENİN bilgisayarındaki ÖZEL anahtarla imzalanır
@@ -224,6 +225,20 @@ app.delete("/api/cihazlar/:id", yetkiGerekli, (req, res) => {
   res.json({ tamam: true });
 });
 
+// ---- Otomatik yedekleme (bkz. yedek.js) ----
+app.get("/api/yedek", yetkiGerekli, (req, res) => res.json(yedek.durumGetir()));
+app.post("/api/yedek", yetkiGerekli, (req, res) => {
+  const sonuc = yedek.yedekAl(true);
+  res.status(sonuc.tamam ? 200 : 500).json({ ...sonuc, durum: yedek.durumGetir() });
+});
+app.post("/api/yedek/ayar", yetkiGerekli, (req, res) => {
+  try {
+    res.json(yedek.ekKlasorAyarla((req.body || {}).ekKlasor));
+  } catch (e) {
+    res.status(400).json({ hata: e.message });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Dış platform webhook'ları (Trendyol Yemek / Getir Yemek / Yemeksepeti / ...).
 //
@@ -427,6 +442,7 @@ function tarayiciyiAc(url) {
 }
 
 server.listen(PORT, () => {
+  yedek.baslat();
   console.log("");
   console.log("=================================================");
   console.log("  ADISYO ÇALIŞIYOR");
