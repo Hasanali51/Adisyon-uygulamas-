@@ -344,10 +344,15 @@ function EntegrasyonKarti({ platformAnahtari, platformAdi, renk, deger, onKaydet
 
   const taban = (genelErisimAdresi || window.location.origin).replace(/\/$/, "");
   const webhookUrl = `${taban}/api/webhook/${platformAnahtari}`;
+  const anahtarliUrl = form.webhookAnahtari ? `${webhookUrl}?anahtar=${encodeURIComponent(form.webhookAnahtari)}` : "";
+  const esl = form.eslesme || {};
+  const eslGuncelle = (k, v) => setForm((f) => ({ ...f, eslesme: { ...(f.eslesme || {}), [k]: v } }));
   const yapilandirildi = !!(form.apiAnahtari && form.webhookAnahtari);
 
   const rastgeleAnahtarUret = () => {
-    const anahtar = Array.from({ length: 24 }, () => "abcdefghijklmnopqrstuvwxyz0123456789"[Math.floor(Math.random() * 36)]).join("");
+    // Tahmin edilemez olması gerekir: Math.random yerine tarayıcının güvenli rastgele üreticisi.
+    const alfabe = "abcdefghijklmnopqrstuvwxyz0123456789";
+    const anahtar = Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => alfabe[b % alfabe.length]).join("");
     setForm((f) => ({ ...f, webhookAnahtari: anahtar }));
   };
 
@@ -442,6 +447,52 @@ function EntegrasyonKarti({ platformAnahtari, platformAdi, renk, deger, onKaydet
           </div>
         </div>
 
+        {anahtarliUrl && (
+          <div>
+            <label className="text-xs opacity-60 mb-1 block">Anahtarlı adres (platform özel başlık gönderemiyorsa bunu ver)</label>
+            <div className="flex gap-2">
+              <div style={{ borderColor: LINE, background: PAPER }} className="border rounded px-3 py-2 text-xs flex-1 truncate font-mono">
+                {anahtarliUrl}
+              </div>
+              <button onClick={() => kopyala(anahtarliUrl)} style={{ borderColor: LINE }} className="border rounded px-2.5 opacity-70 hover:opacity-100">
+                <Copy size={14} />
+              </button>
+            </div>
+            <div className="text-[11px] opacity-55 mt-1">Bu adres gizli anahtarı içerir; sadece platformun panelinde kullan, kimseyle paylaşma.</div>
+          </div>
+        )}
+
+        <details>
+          <summary className="text-xs font-medium cursor-pointer opacity-70">Gelişmiş: alan eşleştirme</summary>
+          <div className="mt-2 flex flex-col gap-2">
+            <div className="text-[11px] opacity-60 leading-relaxed">
+              Platformdan gelen isteğin gövdesi (aşağıdaki Entegrasyon Günlüğü'nde "Ham veri" olarak görünür) bu
+              programın beklediği alan adlarından farklıysa, buraya noktalı yollar yaz (örn. <code>siparis.kalemler</code>,
+              <code> urun.adi</code>). Boş bırakılan alan varsayılanı kullanır.
+            </div>
+            {[
+              ["siparisNo", "Sipariş numarası", "siparisNo"],
+              ["urunler", "Ürün listesi (dizi)", "urunler"],
+              ["ad", "Ürün adı (listedeki her kalemde)", "ad"],
+              ["fiyat", "Birim fiyat", "fiyat"],
+              ["adet", "Adet", "adet"],
+              ["toplam", "Toplam tutar (isteğe bağlı)", "toplam"],
+              ["not", "Müşteri notu (isteğe bağlı)", "musteriNotu"],
+            ].map(([k, etiket, varsayilan]) => (
+              <div key={k} className="flex items-center gap-2">
+                <label className="text-[11px] opacity-60 w-44 shrink-0">{etiket}</label>
+                <input
+                  value={esl[k] || ""}
+                  onChange={(e) => eslGuncelle(k, e.target.value.trim())}
+                  placeholder={varsayilan}
+                  style={{ borderColor: LINE }}
+                  className="border rounded px-2 py-1.5 text-xs w-full outline-none font-mono"
+                />
+              </div>
+            ))}
+          </div>
+        </details>
+
         <button
           onClick={() => onKaydet(form)}
           style={{ background: WINE }}
@@ -449,6 +500,70 @@ function EntegrasyonKarti({ platformAnahtari, platformAdi, renk, deger, onKaydet
         >
           Kaydet
         </button>
+      </div>
+    </div>
+  );
+}
+
+// Platformlardan gelen webhook isteklerinin son kayıtları (sunucu belleğinde, en fazla 30; yeniden başlatınca silinir).
+// Yeni bir platformu bağlarken önce buraya düşen "Ham veri"ye bakıp alan eşleştirmesini yaparsın.
+function EntegrasyonGunluguKarti() {
+  const [kayitlar, setKayitlar] = useState([]);
+  const [acik, setAcik] = useState(null);
+  const yukle = useCallback(async () => {
+    try {
+      const res = await apiFetch(`${API_BASE}/api/entegrasyon-gunlugu`);
+      if (res.ok) setKayitlar(await res.json());
+    } catch (e) {
+      /* yok say */
+    }
+  }, []);
+  useEffect(() => {
+    yukle();
+    const z = setInterval(yukle, 10000);
+    return () => clearInterval(z);
+  }, [yukle]);
+  const temizle = async () => {
+    await apiFetch(`${API_BASE}/api/entegrasyon-gunlugu`, { method: "DELETE" });
+    yukle();
+  };
+  const renk = { kabul: MOSS, tekrar: "#B4530A", red: RUST };
+  const etiket = { kabul: "Kabul", tekrar: "Tekrar", red: "Reddedildi" };
+
+  return (
+    <div style={{ background: CARD, borderColor: LINE }} className="rounded-lg border overflow-hidden">
+      <div style={{ background: INK }} className="flex items-center justify-between px-4 py-2.5">
+        <span className="text-white text-sm font-semibold">Entegrasyon Günlüğü</span>
+        <div className="flex gap-3 text-white text-xs">
+          <button onClick={yukle} className="opacity-80 hover:opacity-100">Yenile</button>
+          <button onClick={temizle} className="opacity-80 hover:opacity-100">Temizle</button>
+        </div>
+      </div>
+      <div className="p-4">
+        <div className="text-[11px] opacity-60 mb-2 leading-relaxed">
+          Platformlardan gelen son istekler. "Reddedildi" satırında nedeni yazar (anahtar yanlış, kalem bulunamadı vb.).
+          Ham veri müşteri bilgisi içerebilir; yeniden başlatınca silinir.
+        </div>
+        {kayitlar.length === 0 && <div className="text-xs opacity-40 py-3 text-center">Henüz istek gelmedi.</div>}
+        {kayitlar.map((k, i) => (
+          <div key={i} style={{ borderColor: LINE }} className="border-t py-2 text-xs">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="opacity-50">{new Date(k.zaman).toLocaleTimeString("tr-TR")}</span>
+              <span className="font-medium">{k.platform}</span>
+              <span style={{ color: renk[k.sonuc] }} className="font-semibold">{etiket[k.sonuc] || k.sonuc}</span>
+              {k.siparisNo && <span className="opacity-60">#{k.siparisNo}</span>}
+              <span className="opacity-60">{k.neden}</span>
+              {k.ham && (
+                <button onClick={() => setAcik(acik === i ? null : i)} style={{ color: WINE }} className="ml-auto">
+                  {acik === i ? "Gizle" : "Ham veri"}
+                </button>
+              )}
+            </div>
+            {acik === i && (
+              <pre style={{ background: PAPER }} className="mt-2 p-2 rounded text-[10px] overflow-x-auto whitespace-pre-wrap break-all">{k.ham}</pre>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -1713,7 +1828,7 @@ export default function AdisyoUygulamasi() {
   const pinDegistir = (yeniPin) => kaydet({ ...durum, yoneticiPin: yeniPin });
 
   // ---- Entegrasyonlar (Trendyol Yemek / Getir Yemek / Yemeksepeti API bilgileri) ----
-  const BOS_ENTEGRASYON = { apiAnahtari: "", apiSifresi: "", magazaId: "", webhookAnahtari: "" };
+  const BOS_ENTEGRASYON = { apiAnahtari: "", apiSifresi: "", magazaId: "", webhookAnahtari: "", eslesme: {} };
   const entegrasyonlar = {
     trendyol: { ...BOS_ENTEGRASYON, ...(durum.entegrasyonlar && durum.entegrasyonlar.trendyol) },
     getir: { ...BOS_ENTEGRASYON, ...(durum.entegrasyonlar && durum.entegrasyonlar.getir) },
@@ -2576,6 +2691,17 @@ export default function AdisyoUygulamasi() {
             onKaydet={(yeni) => entegrasyonGuncelle("yemeksepeti", yeni)}
             genelErisimAdresi={genelErisimAdresi}
           />
+
+          <EntegrasyonGunluguKarti />
+
+          <div style={{ background: MOSS_BG, color: MOSS }} className="rounded-lg p-4 text-xs leading-relaxed">
+            <b>Bilmen gerekenler:</b> Siparişleri platformdan almak için her platformun satıcı/partner onayı ve
+            kendi API belgesi gerekir. Bu ekran siparişleri <b>alır, doğrular, tekrar edenleri eler ve fiş basar</b>.
+            Platforma "siparişi kabul ettim / hazır / yola çıktı" bilgisini <b>geri göndermez</b>; platformlar
+            siparişin belirli sürede kabul edilmesini isteyebilir, o yüzden başlangıçta kabulü platformun kendi
+            panelinden/tabletinden yapmaya devam et. Gerçek canlı akışı ilk onaylı hesapla test edene kadar
+            üretimde bu entegrasyona yalnızca yardımcı olarak güvenme.
+          </div>
         </div>
       )}
 

@@ -361,6 +361,8 @@ const PLATFORM_ADI = {
   ubereats: "Uber Eats",
 };
 
+// Doğrulama: gizli anahtar ya "x-webhook-secret" başlığıyla ya da (platform özel başlık
+// gönderemiyorsa) adresin sonuna eklenen ?anahtar=... ile gelir.
 function webhookDogrula(req, platform, durum) {
   // Öncelik: uygulama içinden (Entegrasyonlar ekranı) girilen anahtar.
   // Girilmemişse eski yöntem olarak .env dosyasındaki değişkene bakılır.
@@ -369,42 +371,146 @@ function webhookDogrula(req, platform, durum) {
   // Anahtar tanımlı DEĞİLSE istek reddedilir: webhook adresi internete açık olduğundan,
   // anahtarsız kabul etmek herkesin sahte sipariş göndermesine izin vermek olurdu.
   if (!beklenen) return false;
-  const gelen = String(req.header("x-webhook-secret") || "");
+  const gelen = String(req.header("x-webhook-secret") || (req.query && req.query.anahtar) || "");
   const a = Buffer.from(gelen);
   const b = Buffer.from(String(beklenen));
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-// Beklenen genel (normalize edilmiş) gövde örneği:
-// {
-//   "siparisNo": "12345",
-//   "urunler": [ { "ad": "Adana Kebap", "fiyat": 340, "adet": 1 }, ... ],
-//   "toplam": 340,        // opsiyonel, verilmezse üründen hesaplanır
-//   "musteriNotu": "Acılı olsun"  // opsiyonel
-// }
-function normallestir(govde) {
-  const urunler = Array.isArray(govde.urunler)
-    ? govde.urunler.map((u) => ({
+// ---- Alan eşleştirme ----
+// Her platformun gövdesi farklıdır. Platformdan gerçek bir örnek geldiğinde (Entegrasyon
+// Günlüğü'nde ham hali görünür) Entegrasyonlar ekranındaki "Alan eşleştirme" bölümüne
+// noktalı yollar yazılarak (ör. "siparis.kalemler", "urun.adi") uyarlanır; kod değiştirmek gerekmez.
+const VARSAYILAN_ESLESME = {
+  siparisNo: "siparisNo",
+  urunler: "urunler",
+  ad: "ad",
+  fiyat: "fiyat",
+  adet: "adet",
+  toplam: "toplam",
+  not: "musteriNotu",
+};
+
+function yolOku(nesne, yol) {
+  if (!yol) return undefined;
+  let v = nesne;
+  for (const parca of String(yol).split(".")) {
+    if (v === null || v === undefined || typeof v !== "object") return undefined;
+    if (!Object.prototype.hasOwnProperty.call(v, parca)) return undefined;
+    v = v[parca];
+  }
+  return v;
+}
+// "12,50" / "12.50" / 12.5 -> 12.5 ; geçersizse 0. Aşırı büyük değerler sınırlanır.
+function sayiyaCevir(x) {
+  const n = typeof x === "number" ? x : parseFloat(String(x ?? "").replace(",", "."));
+  return Number.isFinite(n) ? Math.min(Math.max(n, 0), 1e7) : 0;
+}
+
+const EN_FAZLA_KALEM = 200;
+function normallestir(govde, eslesme) {
+  const e = { ...VARSAYILAN_ESLESME, ...(eslesme || {}) };
+  for (const k of Object.keys(VARSAYILAN_ESLESME)) if (!e[k]) e[k] = VARSAYILAN_ESLESME[k];
+  const liste = yolOku(govde, e.urunler);
+  const urunler = Array.isArray(liste)
+    ? liste.slice(0, EN_FAZLA_KALEM).map((u) => ({
         id: yeniId("u"),
-        ad: String(u.ad || "Ürün"),
-        fiyat: Number(u.fiyat) || 0,
-        adet: Number(u.adet) || 1,
+        ad: String(yolOku(u, e.ad) ?? "Ürün").slice(0, 120),
+        fiyat: sayiyaCevir(yolOku(u, e.fiyat)),
+        adet: Math.min(Math.max(Math.round(sayiyaCevir(yolOku(u, e.adet))) || 1, 1), 999),
       }))
     : [];
-  const toplam = Number(govde.toplam) || urunler.reduce((t, u) => t + u.fiyat * u.adet, 0);
-  return { urunler, toplam, disSiparisNo: govde.siparisNo || null, not: govde.musteriNotu || "" };
+  const verilenToplam = sayiyaCevir(yolOku(govde, e.toplam));
+  const toplam = verilenToplam || urunler.reduce((t, u) => t + u.fiyat * u.adet, 0);
+  const no = yolOku(govde, e.siparisNo);
+  return {
+    urunler,
+    toplam,
+    disSiparisNo: no === undefined || no === null || no === "" ? null : String(no).slice(0, 64),
+    not: String(yolOku(govde, e.not) ?? "").slice(0, 500),
+  };
 }
+
+// ---- Günlük (bellekte son 30 istek), hız sınırı, tekrar koruması ----
+const webhookGunlugu = [];
+function gunlugeEkle(k) {
+  webhookGunlugu.unshift({ zaman: Date.now(), ...k });
+  if (webhookGunlugu.length > 30) webhookGunlugu.length = 30;
+}
+app.get("/api/entegrasyon-gunlugu", yoneticiGerekli, (req, res) => res.json(webhookGunlugu));
+app.delete("/api/entegrasyon-gunlugu", yoneticiGerekli, (req, res) => {
+  webhookGunlugu.length = 0;
+  res.json({ tamam: true });
+});
+
+const HIZ_PENCERE_MS = 60 * 1000;
+const HIZ_EN_FAZLA = 120; // IP başına dakikada
+const hizSayaclari = new Map();
+function hizAsildi(ip) {
+  const simdi = Date.now();
+  const k = hizSayaclari.get(ip);
+  if (!k || simdi - k.baslangic > HIZ_PENCERE_MS) {
+    hizSayaclari.set(ip, { baslangic: simdi, sayi: 1 });
+    return false;
+  }
+  k.sayi += 1;
+  return k.sayi > HIZ_EN_FAZLA;
+}
+setInterval(() => {
+  const simdi = Date.now();
+  hizSayaclari.forEach((v, k) => simdi - v.baslangic > HIZ_PENCERE_MS && hizSayaclari.delete(k));
+}, HIZ_PENCERE_MS).unref();
+
+// Platformlar başarısız yanıtta isteği tekrar gönderir; aynı sipariş iki kez fiş basmasın.
+const gorulenSiparisler = new Map(); // "platform:siparisNo" -> zaman
+const GORULEN_SURE_MS = 24 * 60 * 60 * 1000;
+setInterval(() => {
+  const simdi = Date.now();
+  gorulenSiparisler.forEach((v, k) => simdi - v > GORULEN_SURE_MS && gorulenSiparisler.delete(k));
+}, 60 * 60 * 1000).unref();
 
 app.post("/api/webhook/:platform", async (req, res) => {
   const platformKey = String(req.params.platform || "").toLowerCase();
   const platformAdi = PLATFORM_ADI[platformKey];
   if (!platformAdi) return res.status(404).json({ hata: "Bilinmeyen platform." });
 
-  const durum = db.oku();
-  if (!webhookDogrula(req, platformKey, durum)) return res.status(401).json({ hata: "Doğrulama başarısız." });
+  const ip = String(req.header("x-forwarded-for") || req.socket.remoteAddress || "").split(",")[0].trim();
+  const ham = () => {
+    try {
+      return JSON.stringify(req.body).slice(0, 4000);
+    } catch (e) {
+      return "";
+    }
+  };
+  const reddet = (kod, hata, neden) => {
+    gunlugeEkle({ platform: platformKey, sonuc: "red", neden, ip, ham: ham() });
+    return res.status(kod).json({ hata });
+  };
 
-  const { urunler, toplam, disSiparisNo, not } = normallestir(req.body || {});
-  if (urunler.length === 0) return res.status(400).json({ hata: "Sipariş kalemi bulunamadı." });
+  if (hizAsildi(ip)) return reddet(429, "Çok fazla istek.", "hız sınırı aşıldı");
+  if (Number(req.headers["content-length"] || 0) > 256 * 1024) return reddet(413, "İstek çok büyük.", "256 KB üstü");
+
+  const durum = db.oku();
+  if (!webhookDogrula(req, platformKey, durum)) {
+    const anahtarVar = !!((durum.entegrasyonlar || {})[platformKey] || {}).webhookAnahtari;
+    return reddet(401, "Doğrulama başarısız.", anahtarVar ? "gizli anahtar yanlış/eksik" : "webhook anahtarı tanımlı değil");
+  }
+
+  const ayar = (durum.entegrasyonlar && durum.entegrasyonlar[platformKey]) || {};
+  const { urunler, toplam, disSiparisNo, not } = normallestir(req.body || {}, ayar.eslesme);
+  if (urunler.length === 0) return reddet(400, "Sipariş kalemi bulunamadı.", "kalem bulunamadı (alan eşleştirmeyi kontrol et)");
+
+  if (disSiparisNo) {
+    const anahtar = `${platformKey}:${disSiparisNo}`;
+    const mevcutMu =
+      gorulenSiparisler.has(anahtar) ||
+      (durum.paketSiparisler || []).some((p) => p.platform === platformAdi && p.disSiparisNo === disSiparisNo);
+    if (mevcutMu) {
+      gunlugeEkle({ platform: platformKey, sonuc: "tekrar", neden: "aynı sipariş numarası zaten alınmış", ip, siparisNo: disSiparisNo, ham: ham() });
+      return res.json({ tamam: true, tekrar: true }); // 200: platform yeniden denemeyi bıraksın
+    }
+    gorulenSiparisler.set(anahtar, Date.now());
+  }
 
   const siparis = {
     id: yeniId("p"),
@@ -416,13 +522,15 @@ app.post("/api/webhook/:platform", async (req, res) => {
     olusturmaZamani: Date.now(),
   };
 
-  const yeniDurum = { ...durum, paketSiparisler: [siparis, ...(durum.paketSiparisler || [])] };
+  // Okuma-değiştirme-yazma arasında başka yazma araya girmesin diye durum en güncel haliyle okunur.
+  const yeniDurum = { ...db.oku(), paketSiparisler: [siparis, ...(db.oku().paketSiparisler || [])] };
   await db.yaz(yeniDurum);
 
   // 1) Tüm ekranlara güncel durumu yolla, 2) o an bağlı olan kasa ekranına
   // "hemen yazdır" komutu ayrıca gönderilir.
   yayinla({ type: "durum", payload: yeniDurum });
   yayinla({ type: "siparis_geldi", payload: siparis });
+  gunlugeEkle({ platform: platformKey, sonuc: "kabul", neden: `${urunler.length} kalem, ${toplam} ₺`, ip, siparisNo: disSiparisNo, ham: ham() });
 
   res.json({ tamam: true, siparisId: siparis.id });
 });
