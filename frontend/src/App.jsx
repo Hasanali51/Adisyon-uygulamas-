@@ -35,9 +35,17 @@ const cihazAnahtariYaz = (v) => {
     /* yok say */
   }
 };
+// Yönetici oturumu (PIN sunucuda doğrulanır): sadece bellekte tutulur, sayfa yenilenince düşer.
+let yoneticiOturumu = "";
+const yoneticiOturumuYaz = (v) => {
+  yoneticiOturumu = v || "";
+};
 const apiFetch = (url, opts = {}) => {
   const k = cihazAnahtariOku();
-  return fetch(url, k ? { ...opts, headers: { ...(opts.headers || {}), "x-cihaz-anahtari": k } } : opts);
+  const ek = {};
+  if (k) ek["x-cihaz-anahtari"] = k;
+  if (yoneticiOturumu) ek["x-yonetici-oturumu"] = yoneticiOturumu;
+  return fetch(url, Object.keys(ek).length ? { ...opts, headers: { ...(opts.headers || {}), ...ek } } : opts);
 };
 
 const INK = "#1E293B";
@@ -967,6 +975,7 @@ export default function AdisyoUygulamasi() {
   const [yukleniyor, setYukleniyor] = useState(true);
   const [hataMesaji, setHataMesaji] = useState("");
   const [eslestirmeGerekli, setEslestirmeGerekli] = useState(false);
+  const [oturumSayaci, setOturumSayaci] = useState(0); // yönetici girişi/çıkışında WebSocket'i yenilemek için
   const [gorunum, setGorunum] = useState("masalar"); // masalar | ayarlar | rapor | paket
   const [ayarlarSekme, setAyarlarSekme] = useState("masalar"); // masalar | menu | yazici
 
@@ -1006,6 +1015,7 @@ export default function AdisyoUygulamasi() {
   const [pinModalAcik, setPinModalAcik] = useState(false);
   const [pinDeger, setPinDeger] = useState("");
   const [pinHata, setPinHata] = useState(false);
+  const [pinHataMetni, setPinHataMetni] = useState("");
   const [ilkKurulumAdi, setIlkKurulumAdi] = useState("");
 
   // ---- Paket kutucukları ----
@@ -1085,7 +1095,10 @@ export default function AdisyoUygulamasi() {
 
     const baglan = () => {
       const k = cihazAnahtariOku();
-      ws = new WebSocket(`${WS_BASE}/ws${k ? `?k=${encodeURIComponent(k)}` : ""}`);
+      const parcalar = [];
+      if (k) parcalar.push(`k=${encodeURIComponent(k)}`);
+      if (yoneticiOturumu) parcalar.push(`y=${encodeURIComponent(yoneticiOturumu)}`);
+      ws = new WebSocket(`${WS_BASE}/ws${parcalar.length ? `?${parcalar.join("&")}` : ""}`);
       ws.onopen = () => setBaglantiDurumu("bagli");
       ws.onclose = () => {
         setBaglantiDurumu("kopuk");
@@ -1119,7 +1132,7 @@ export default function AdisyoUygulamasi() {
       clearTimeout(yenidenBaglanTimer);
       if (ws) ws.close();
     };
-  }, []);
+  }, [oturumSayaci]);
 
   // Electron ortamındaysak (window.adisyo preload'dan geldiyse), sistemdeki
   // yazıcıları çek — Ayarlar'daki "Seçili Yazıcı" listesini doldurmak için.
@@ -1179,6 +1192,15 @@ export default function AdisyoUygulamasi() {
         setEslestirmeGerekli(true);
         return;
       }
+      if (res.status === 403) {
+        // Yönetici oturumu sona ermiş: gizli ayar değişikliği kaydedilmedi, garson moduna dön.
+        yoneticiOturumuYaz("");
+        setRol("garson");
+        setOturumSayaci((n) => n + 1);
+        setHataMesaji("Yönetici oturumu sona erdi, değişiklik kaydedilmedi. Tekrar yönetici girişi yap.");
+        yukle();
+        return;
+      }
       if (res.ok) {
         setHataMesaji("");
         kaydetDenemeRef.current = 0;
@@ -1196,7 +1218,7 @@ export default function AdisyoUygulamasi() {
         setTimeout(() => kalicKaydet(yeniDurum), 5000); // bağlantı düzelince otomatik kurtulsun
       }
     }
-  }, []);
+  }, [yukle]);
 
   // Ekranı anında güncelle, kalıcı kaydı ise 500ms geciktirip tek seferde gönder
   // (özellikle yazı yazarken her tuş vuruşunda ayrı istek atıp çakışmayı önler)
@@ -1687,7 +1709,7 @@ export default function AdisyoUygulamasi() {
       : null;
 
   // ---- Roller: garson / yönetici ----
-  const yoneticiPin = durum.yoneticiPin || "1234";
+  const yoneticiPin = durum.yoneticiPin || ""; // sadece yönetici oturumunda dolu gelir
   const pinDegistir = (yeniPin) => kaydet({ ...durum, yoneticiPin: yeniPin });
 
   // ---- Entegrasyonlar (Trendyol Yemek / Getir Yemek / Yemeksepeti API bilgileri) ----
@@ -1715,19 +1737,43 @@ export default function AdisyoUygulamasi() {
     if (yeni.ngrokDomain) guncelDurum.genelErisimAdresi = `https://${yeni.ngrokDomain}`;
     kaydet(guncelDurum);
   };
-  const yoneticiGirisiDene = () => {
-    if (pinDeger === yoneticiPin) {
+  const yoneticiGirisiDene = async () => {
+    try {
+      const res = await apiFetch(`${API_BASE}/api/yonetici-giris`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin: pinDeger }),
+      });
+      const v = await res.json().catch(() => ({}));
+      if (!res.ok || !v.oturum) {
+        setPinHataMetni(v.hata || "");
+        setPinHata(true);
+        return;
+      }
+      yoneticiOturumuYaz(v.oturum);
       setRol("yonetici");
       setPinModalAcik(false);
       setPinDeger("");
       setPinHata(false);
-    } else {
+      setPinHataMetni("");
+      setOturumSayaci((n) => n + 1); // WebSocket'i yönetici oturumuyla yeniden bağla
+      await yukle(); // gizli alanlar dahil tam durumu al
+    } catch (e) {
+      setPinHataMetni("Sunucuya ulaşılamadı.");
       setPinHata(true);
     }
   };
-  const garsonModunaDon = () => {
+  const garsonModunaDon = async () => {
+    try {
+      await apiFetch(`${API_BASE}/api/yonetici-cikis`, { method: "POST" });
+    } catch (e) {
+      /* yok say */
+    }
+    yoneticiOturumuYaz("");
     setRol("garson");
     if (gorunum === "ayarlar" || gorunum === "rapor" || gorunum === "entegrasyon") setGorunum("masalar");
+    setOturumSayaci((n) => n + 1);
+    yukle(); // gizli alanları ekrandan düşür
   };
 
   // İşletme ilk kez açılıyor mu? (henüz işletme adı girilmemiş)
@@ -2283,7 +2329,7 @@ export default function AdisyoUygulamasi() {
               placeholder="PIN"
               className="border rounded-lg px-3 py-2.5 text-sm w-full outline-none tracking-widest text-center mb-1"
             />
-            {pinHata && <div style={{ color: RUST }} className="text-xs mb-2">PIN yanlış, tekrar dene.</div>}
+            {pinHata && <div style={{ color: RUST }} className="text-xs mb-2">{pinHataMetni || "PIN yanlış, tekrar dene."}</div>}
             <div className="flex gap-2 mt-3">
               <button
                 onClick={() => setPinModalAcik(false)}
@@ -3140,6 +3186,11 @@ export default function AdisyoUygulamasi() {
                 <div className="text-xs opacity-60 -mt-2">
                   Ciro/menü/masa/yazıcı ayarlarına girmek için garsonlardan istenen PIN. Sadece sen bilmelisin.
                 </div>
+                {yoneticiPin === "1234" && (
+                  <div style={{ background: RUST_BG, color: RUST }} className="rounded p-2.5 text-xs leading-relaxed -mt-1">
+                    <b>Varsayılan PIN (1234) hâlâ kullanılıyor.</b> Herkes bunu bildiği için hemen değiştir.
+                  </div>
+                )}
                 <YoneticiPinDegistir mevcutPin={yoneticiPin} onKaydet={pinDegistir} />
               </div>
 

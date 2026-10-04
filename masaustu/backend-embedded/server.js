@@ -94,17 +94,21 @@ const wss = new WebSocketServer({
   verifyClient: ({ req }) => !tuneldenGelenIstek(req) && yetkiliMi(req),
 });
 
+// Durum mesajları istemciye göre süzülür: yönetici oturumu olmayan ekranlara gizli alanlar
+// (PIN, platform API anahtarları, ngrok token'ı) hiç gönderilmez.
 function yayinla(mesaj) {
-  const veri = JSON.stringify(mesaj);
+  const tam = JSON.stringify(mesaj);
+  const gizli = mesaj.type === "durum" ? JSON.stringify({ ...mesaj, payload: gizle(mesaj.payload) }) : tam;
   wss.clients.forEach((istemci) => {
-    if (istemci.readyState === istemci.OPEN) istemci.send(veri);
+    if (istemci.readyState === istemci.OPEN) istemci.send(istemci.admin ? tam : gizli);
   });
 }
 
 wss.on("connection", (ws, req) => {
   ws.cihazHash = cihazHashiAl(req);
+  ws.admin = adminMi(req);
   // Yeni bağlanan istemciye mevcut durumu hemen gönder.
-  ws.send(JSON.stringify({ type: "durum", payload: db.oku() }));
+  ws.send(JSON.stringify({ type: "durum", payload: ws.admin ? db.oku() : gizle(db.oku()) }));
 });
 
 // ---------------------------------------------------------------------------
@@ -127,14 +131,31 @@ app.post("/api/lisans-dogrula", (req, res) => {
 
 // Uygulamanın (frontend) tüm state'i okuduğu/yazdığı uç noktalar.
 app.get("/api/durum", yetkiGerekli, (req, res) => {
-  res.json(db.oku());
+  const d = db.oku();
+  res.json(adminMi(req) ? d : gizle(d));
 });
 
 app.post("/api/durum", yetkiGerekli, yaziKorumasi, async (req, res) => {
   const yeniDurum = req.body;
-  if (!yeniDurum || typeof yeniDurum !== "object") {
+  if (!yeniDurum || typeof yeniDurum !== "object" || Array.isArray(yeniDurum)) {
     return res.status(400).json({ hata: "Geçersiz gövde." });
   }
+  const mevcut = db.oku();
+  const gizliAlanlar = (d) => JSON.stringify([d.yoneticiPin, d.entegrasyonlar, d.tunelAyarlari]);
+  if (yeniDurum._gizli === true) {
+    // İstemci süzülmüş (gizli alanları olmayan) durumla çalışıyordu: gizli alanları sunucudan koru.
+    yeniDurum.yoneticiPin = mevcut.yoneticiPin;
+    yeniDurum.entegrasyonlar = mevcut.entegrasyonlar;
+    yeniDurum.tunelAyarlari = mevcut.tunelAyarlari;
+  } else if (!adminMi(req)) {
+    // Yönetici oturumu yokken PIN/API anahtarı/tünel ayarını değiştirmeye çalışan istek reddedilir.
+    if (gizliAlanlar(yeniDurum) !== gizliAlanlar(mevcut)) {
+      return res.status(403).json({ hata: "Bu değişiklik için yönetici girişi gerekli.", yoneticiGerekli: true });
+    }
+  } else if (typeof yeniDurum.yoneticiPin !== "string" || yeniDurum.yoneticiPin.length < 4 || yeniDurum.yoneticiPin.length > 32) {
+    yeniDurum.yoneticiPin = mevcut.yoneticiPin; // geçersiz PIN asla kaydedilmez
+  }
+  delete yeniDurum._gizli;
   try {
     await db.yaz(yeniDurum);
     yayinla({ type: "durum", payload: yeniDurum });
@@ -184,7 +205,7 @@ let aktifKod = null; // { kod, bitis, hata }
 const KOD_SURESI_MS = 5 * 60 * 1000;
 const KOD_EN_FAZLA_HATA = 5;
 
-app.post("/api/eslestirme-kodu", yetkiGerekli, (req, res) => {
+app.post("/api/eslestirme-kodu", yoneticiGerekli, (req, res) => {
   const kod = String(crypto.randomInt(0, 1000000)).padStart(6, "0");
   aktifKod = { kod, bitis: Date.now() + KOD_SURESI_MS, hata: 0 };
   res.json({ kod, saniye: KOD_SURESI_MS / 1000 });
@@ -211,11 +232,11 @@ app.post("/api/eslestir", (req, res) => {
   res.json({ anahtar });
 });
 
-app.get("/api/cihazlar", yetkiGerekli, (req, res) => {
+app.get("/api/cihazlar", yoneticiGerekli, (req, res) => {
   res.json(db.cihazlariOku().map(({ id, ad, tarih }) => ({ id, ad, tarih })));
 });
 
-app.delete("/api/cihazlar/:id", yetkiGerekli, (req, res) => {
+app.delete("/api/cihazlar/:id", yoneticiGerekli, (req, res) => {
   const liste = db.cihazlariOku();
   const hedef = liste.find((c) => c.id === req.params.id);
   if (!hedef) return res.status(404).json({ hata: "Cihaz bulunamadı." });
@@ -225,13 +246,95 @@ app.delete("/api/cihazlar/:id", yetkiGerekli, (req, res) => {
   res.json({ tamam: true });
 });
 
+// ---------------------------------------------------------------------------
+// Yönetici oturumu: PIN artık SUNUCUDA doğrulanır (ekranda değil). Doğru PIN'e karşılık
+// rastgele bir oturum anahtarı verilir (12 saat boşta kalınca düşer). Gizli alanları
+// (yönetici PIN'i, platform API anahtarları, ngrok token'ı) görmek/değiştirmek ve
+// cihaz/yedek uçlarını kullanmak bu oturumu gerektirir. Garson ekranları bunlara hiç ulaşamaz.
+// ---------------------------------------------------------------------------
+const OTURUM_BOSTA_MS = 12 * 60 * 60 * 1000;
+const adminOturumlari = new Map(); // anahtarın hash'i -> { bitis }
+function yoneticiTokeniAl(req) {
+  const baslik = req.headers["x-yonetici-oturumu"];
+  if (baslik) return String(baslik);
+  try {
+    return new URL(req.url, "http://x").searchParams.get("y") || "";
+  } catch (e) {
+    return "";
+  }
+}
+function adminMi(req) {
+  const t = yoneticiTokeniAl(req);
+  if (!t) return false;
+  const h = hashle(t);
+  const o = adminOturumlari.get(h);
+  if (!o) return false;
+  if (Date.now() > o.bitis) {
+    adminOturumlari.delete(h);
+    return false;
+  }
+  o.bitis = Date.now() + OTURUM_BOSTA_MS; // kayan süre
+  return true;
+}
+function yoneticiGerekli(req, res, next) {
+  yetkiGerekli(req, res, () => {
+    if (adminMi(req)) return next();
+    return res.status(403).json({ hata: "Yönetici girişi gerekli.", yoneticiGerekli: true });
+  });
+}
+// Gizli alanları çıkarılmış durum kopyası (garson ekranları için).
+function gizle(d) {
+  const k = { ...d };
+  delete k.yoneticiPin;
+  k.entegrasyonlar = {};
+  k.tunelAyarlari = { ngrokAuthtoken: "", ngrokDomain: (d.tunelAyarlari && d.tunelAyarlari.ngrokDomain) || "" };
+  k._gizli = true;
+  return k;
+}
+
+// PIN kaba kuvvet koruması: 5 yanlış denemede 5 dakika kilit (cihaz bazlı).
+const pinDenemeleri = new Map();
+const PIN_EN_FAZLA_HATA = 5;
+const PIN_KILIT_MS = 5 * 60 * 1000;
+
+app.post("/api/yonetici-giris", yetkiGerekli, (req, res) => {
+  const anahtar = cihazHashiAl(req) || String(req.socket.remoteAddress);
+  const kayit = pinDenemeleri.get(anahtar) || { sayi: 0, kilitBitis: 0 };
+  if (Date.now() < kayit.kilitBitis) {
+    const dk = Math.ceil((kayit.kilitBitis - Date.now()) / 60000);
+    return res.status(429).json({ hata: `Çok fazla hatalı deneme. ${dk} dakika sonra tekrar dene.` });
+  }
+  const gelen = Buffer.from(String((req.body || {}).pin ?? ""));
+  const gercek = String(db.oku().yoneticiPin || "1234");
+  const beklenen = Buffer.from(gercek);
+  if (gelen.length !== beklenen.length || !crypto.timingSafeEqual(gelen, beklenen)) {
+    kayit.sayi += 1;
+    if (kayit.sayi >= PIN_EN_FAZLA_HATA) {
+      kayit.sayi = 0;
+      kayit.kilitBitis = Date.now() + PIN_KILIT_MS;
+    }
+    pinDenemeleri.set(anahtar, kayit);
+    return res.status(401).json({ hata: "PIN yanlış, tekrar dene." });
+  }
+  pinDenemeleri.delete(anahtar);
+  const oturum = crypto.randomBytes(32).toString("base64url");
+  adminOturumlari.set(hashle(oturum), { bitis: Date.now() + OTURUM_BOSTA_MS });
+  res.json({ oturum, varsayilanPin: gercek === "1234" });
+});
+
+app.post("/api/yonetici-cikis", yetkiGerekli, (req, res) => {
+  const t = yoneticiTokeniAl(req);
+  if (t) adminOturumlari.delete(hashle(t));
+  res.json({ tamam: true });
+});
+
 // ---- Otomatik yedekleme (bkz. yedek.js) ----
-app.get("/api/yedek", yetkiGerekli, (req, res) => res.json(yedek.durumGetir()));
-app.post("/api/yedek", yetkiGerekli, (req, res) => {
+app.get("/api/yedek", yoneticiGerekli, (req, res) => res.json(yedek.durumGetir()));
+app.post("/api/yedek", yoneticiGerekli, (req, res) => {
   const sonuc = yedek.yedekAl(true);
   res.status(sonuc.tamam ? 200 : 500).json({ ...sonuc, durum: yedek.durumGetir() });
 });
-app.post("/api/yedek/ayar", yetkiGerekli, (req, res) => {
+app.post("/api/yedek/ayar", yoneticiGerekli, (req, res) => {
   try {
     res.json(yedek.ekKlasorAyarla((req.body || {}).ekKlasor));
   } catch (e) {
