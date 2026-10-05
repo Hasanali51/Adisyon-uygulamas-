@@ -27,7 +27,7 @@ const yedek = require("./yedek");
 // kontrolü atlayacak şekilde kodu değiştirebilir; bu sistem anahtarı başkasına
 // "göndermeyi" ve sahte anahtar üretmeyi engeller, tam DRM değildir.)
 const LISANS_GENEL_ANAHTAR = `-----BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEA40w+X734542Im/W1kaGneq+2emG5FgIb7cZLLlaUamY=
+MCowBQYDK2VwAyEAncsUhuQLgdOgF36OTM63mnkDxhk82zgSl6v91fnzfIU=
 -----END PUBLIC KEY-----`;
 
 const lisansAdiNormal = (s) => String(s || "").trim().toLocaleUpperCase("tr-TR");
